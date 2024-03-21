@@ -115,7 +115,8 @@ typedef struct smtpsession {
 
 } smtp_session_t;
 
-void free_smtp_session_state(emailsession_t *sess, void *smtpstate) {
+void free_smtp_session_state(openli_email_worker_t *state,
+        emailsession_t *sess, void *smtpstate) {
 
     PWord_t pval;
     Word_t res;
@@ -373,7 +374,8 @@ static int append_content_to_smtp_buffer(smtp_session_t *smtpsess,
     return 0;
 }
 
-static char *extract_smtp_participant(emailsession_t *sess,
+static char *extract_smtp_participant(openli_email_worker_t *state,
+        emailsession_t *sess,
         smtp_session_t *smtpstate, int contoffset, int contend) {
 
     char *addr, *addrstart, *addrend;
@@ -400,7 +402,7 @@ static char *extract_smtp_participant(emailsession_t *sess,
 
     addr = strndup(addrstart + 1, addrend - addrstart - 1);
 
-    add_email_participant(sess, addr,
+    add_email_participant(state, sess, addr,
             (sess->currstate == OPENLI_SMTP_STATE_MAIL_FROM_OVER));
     return addr;
 
@@ -856,7 +858,7 @@ static int rcpt_to_reply(openli_email_worker_t *state,
         sess->currstate = OPENLI_SMTP_STATE_RCPT_TO_OVER;
 
         /* extract recipient info from rcpt to content */
-        address = extract_smtp_participant(sess, smtpsess,
+        address = extract_smtp_participant(state, sess, smtpsess,
                     smtpsess->command_start, smtpsess->contbufread);
         if (address == NULL) {
             return -1;
@@ -978,7 +980,7 @@ static int forwarding_header_check(openli_email_worker_t *state,
             }
             if (*val != '\0') {
                 /* we now have the "real" sender of this forward */
-                add_email_participant(sess, strdup(val), 1);
+                add_email_participant(state, sess, strdup(val), 1);
                 return 1;
             }
         }
@@ -1123,7 +1125,7 @@ static int set_sender_using_mail_from(openli_email_worker_t *state,
         emailsession_t *sess, smtp_session_t *smtpsess, uint64_t timestamp,
         smtp_participant_t **sender) {
 
-    if (extract_smtp_participant(sess, smtpsess,
+    if (extract_smtp_participant(state, sess, smtpsess,
                 smtpsess->last_mail_from.command_start,
                 smtpsess->contbufread) == NULL) {
         return -1;
@@ -1156,7 +1158,7 @@ static int mail_from_reply(openli_email_worker_t *state,
             sess->login_time = timestamp;
         }
 
-        clear_email_participant_list(sess);
+        clear_email_participant_list(state, sess);
         if (smtpsess->last_ehlo_reply_code >= 200 &&
                 smtpsess->last_ehlo_reply_code < 300) {
 
@@ -1240,9 +1242,9 @@ static int process_auth_credentials(smtp_session_t *smtpsess) {
     return 1;
 }
 
-static int extract_sender_from_auth_creds(emailsession_t *sess,
-        smtp_session_t *smtpsess, const char *defaultdomain, char **sendername,
-        uint8_t authed) {
+static int extract_sender_from_auth_creds(openli_email_worker_t *state,
+        emailsession_t *sess, smtp_session_t *smtpsess,
+        const char *defaultdomain, char **sendername, uint8_t authed) {
 
     base64_decodestate s;
     char decoded[2048];
@@ -1311,7 +1313,7 @@ static int extract_sender_from_auth_creds(emailsession_t *sess,
     if (sender) {
         *sendername = sender;
         if (authed) {
-            add_email_participant(sess, sender, 1);
+            add_email_participant(state, sess, sender, 1);
         }
         return 1;
     } else {
@@ -1335,7 +1337,7 @@ static int authenticate_success(openli_email_worker_t *state,
         defaultdomain = "example.org";
     }
 
-    r = extract_sender_from_auth_creds(sess, smtpsess, defaultdomain,
+    r = extract_sender_from_auth_creds(state, sess, smtpsess, defaultdomain,
             &sendername, 1);
     pthread_rwlock_unlock(state->glob_config_mutex);
 
@@ -1374,9 +1376,14 @@ static int authenticate_failure(openli_email_worker_t *state,
 
     char *sendername = NULL;
     int r, i;
+    const char *defaultdomain = NULL;
 
-    /* TODO add option to set default domain */
-    r = extract_sender_from_auth_creds(sess, smtpsess, "example.org",
+    if (state->defaultdomain) {
+        defaultdomain = (const char *)(*(state->defaultdomain));
+    } else {
+        defaultdomain = "example.org";
+    }
+    r = extract_sender_from_auth_creds(state, sess, smtpsess, defaultdomain,
             &sendername, 0);
     if (r <= 0) {
         return r;
@@ -1766,7 +1773,7 @@ static int process_next_smtp_state(openli_email_worker_t *state,
 
             }
             if (sess->currstate != OPENLI_SMTP_STATE_DATA_OVER) {
-                clear_email_participant_list(sess);
+                clear_email_participant_list(state, sess);
                 set_all_smtp_participants_inactive(smtpsess);
             }
             save_latest_command(state, sess, smtpsess, timestamp,

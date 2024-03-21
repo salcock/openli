@@ -132,6 +132,11 @@ typedef struct openli_email_captured {
 
 } openli_email_captured_t;
 
+#define OPENLI_EMAIL_WORKER_LOG_EXTREME 1
+#define OPENLI_EMAIL_WORKER_LOG_DEBUG 2
+#define OPENLI_EMAIL_WORKER_LOG_INFO 3
+
+
 typedef struct openli_email_worker {
 
     void *zmq_ctxt;
@@ -172,23 +177,29 @@ typedef struct openli_email_worker {
     string_set_t **email_forwarding_headers;
     pthread_rwlock_t *glob_config_mutex;
 
+    uint8_t log_level;
 } openli_email_worker_t;
 
 void *start_email_worker_thread(void *arg);
 void free_captured_email(openli_email_captured_t *cap);
 
-void free_smtp_session_state(emailsession_t *sess, void *smtpstate);
+void free_smtp_session_state(openli_email_worker_t *state,
+        emailsession_t *sess, void *smtpstate);
 int update_smtp_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
-void free_imap_session_state(emailsession_t *sess, void *imapstate);
+void free_imap_session_state(openli_email_worker_t *state,
+        emailsession_t *sess, void *imapstate);
 int update_imap_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
-void free_pop3_session_state(emailsession_t *sess, void *pop3state);
+void free_pop3_session_state(openli_email_worker_t *state,
+        emailsession_t *sess, void *pop3state);
 int update_pop3_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
 
-void add_email_participant(emailsession_t *sess, char *address, int issender);
-void clear_email_participant_list(emailsession_t *sess);
+void add_email_participant(openli_email_worker_t *state,
+        emailsession_t *sess, char *address, int issender);
+void clear_email_participant_list(openli_email_worker_t *state,
+        emailsession_t *sess);
 void clear_email_sender(emailsession_t *sess);
 
 int extract_email_sender_from_body(openli_email_worker_t *state,

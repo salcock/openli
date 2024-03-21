@@ -133,8 +133,8 @@ static int append_content_to_pop3_buffer(pop3_session_t *pop3sess,
     return 0;
 }
 
-static int decode_login_username_command(emailsession_t *sess,
-        pop3_session_t *pop3sess) {
+static int decode_login_username_command(openli_email_worker_t *state,
+        emailsession_t *sess, pop3_session_t *pop3sess) {
 
     char *usermsg;
     int msglen;
@@ -156,7 +156,7 @@ static int decode_login_username_command(emailsession_t *sess,
 
     username += 1;
     pop3sess->mailbox = strdup(username);
-    add_email_participant(sess, pop3sess->mailbox, 0);
+    add_email_participant(state, sess, pop3sess->mailbox, 0);
     free(usermsg);
     return 1;
 }
@@ -194,7 +194,7 @@ static int update_auth_command(pop3_session_t *pop3sess, char *replace,
 }
 
 static int decode_plain_auth_content(char *authmsg, pop3_session_t *pop3sess,
-        emailsession_t *sess) {
+        emailsession_t *sess, openli_email_worker_t *state) {
 
     char decoded[2048];
     char reencoded[2048];
@@ -244,7 +244,7 @@ static int decode_plain_auth_content(char *authmsg, pop3_session_t *pop3sess,
      * separated by null bytes (e.g. <mailbox> \0 <username> \0 <password>)
      */
     pop3sess->mailbox = strdup(ptr);
-    add_email_participant(sess, pop3sess->mailbox, 0);
+    add_email_participant(state, sess, pop3sess->mailbox, 0);
 
     /* replace encoded credentials, if requested by the user */
     if (sess->mask_credentials) {
@@ -273,7 +273,8 @@ static inline char *clone_authentication_message(pop3_session_t *pop3sess,
     return authmsg;
 }
 
-static int decode_auth_command(emailsession_t *sess, pop3_session_t *pop3sess) {
+static int decode_auth_command(openli_email_worker_t *state,
+        emailsession_t *sess, pop3_session_t *pop3sess) {
     /* this command is essentially a clone of the IMAP AUTH command, so
      * we can handle it using very similar code...
      */
@@ -311,7 +312,7 @@ static int decode_auth_command(emailsession_t *sess, pop3_session_t *pop3sess) {
 
         /* TODO support other AUTH types? */
         if (pop3sess->auth_type == OPENLI_EMAIL_AUTH_PLAIN) {
-            r = decode_plain_auth_content(authmsg, pop3sess, sess);
+            r = decode_plain_auth_content(authmsg, pop3sess, sess, state);
             free(authmsg);
             return r;
         } else {
@@ -323,8 +324,8 @@ static int decode_auth_command(emailsession_t *sess, pop3_session_t *pop3sess) {
 
 }
 
-static int decode_login_apop_command(emailsession_t *sess,
-        pop3_session_t *pop3sess) {
+static int decode_login_apop_command(openli_email_worker_t *state,
+        emailsession_t *sess, pop3_session_t *pop3sess) {
 
     char *usermsg;
     int msglen;
@@ -354,7 +355,7 @@ static int decode_login_apop_command(emailsession_t *sess,
     }
 
     pop3sess->mailbox = strndup(username, username_end - username);
-    add_email_participant(sess, pop3sess->mailbox, 0);
+    add_email_participant(state, sess, pop3sess->mailbox, 0);
     return 1;
 }
 
@@ -647,7 +648,7 @@ static int extract_pop3_email_sender(openli_email_worker_t *state,
     }
 
     pop3sess->mail_sender = extracted;
-    add_email_participant(sess, pop3sess->mail_sender, 1);
+    add_email_participant(state, sess, pop3sess->mail_sender, 1);
     free(safecopy);
 
     return r;
@@ -702,8 +703,8 @@ static int handle_multi_reply_state(openli_email_worker_t *state,
     return 1;
 }
 
-static int handle_client_command(emailsession_t *sess,
-        pop3_session_t *pop3sess) {
+static int handle_client_command(openli_email_worker_t *state,
+        emailsession_t *sess, pop3_session_t *pop3sess) {
 
     int r;
 
@@ -733,7 +734,7 @@ static int handle_client_command(emailsession_t *sess,
         }
     } else if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_AUTH) {
         sess->currstate = OPENLI_POP3_STATE_AUTH;
-        if (decode_auth_command(sess, pop3sess) < 0) {
+        if (decode_auth_command(state, sess, pop3sess) < 0) {
             return -1;
         }
     } else {
@@ -741,13 +742,13 @@ static int handle_client_command(emailsession_t *sess,
     }
 
     if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_USER) {
-        if (decode_login_username_command(sess, pop3sess) < 0) {
+        if (decode_login_username_command(state, sess, pop3sess) < 0) {
             return -1;
         }
     }
 
     if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_APOP) {
-        if (decode_login_apop_command(sess, pop3sess) < 0) {
+        if (decode_login_apop_command(state, sess, pop3sess) < 0) {
             return -1;
         }
     }
@@ -937,7 +938,7 @@ static int process_next_pop3_line(openli_email_worker_t *state,
             return r;
 
         case OPENLI_POP3_STATE_WAITING_COMMAND:
-            r = handle_client_command(sess, pop3sess);
+            r = handle_client_command(state, sess, pop3sess);
             return r;
 
         case OPENLI_POP3_STATE_IGNORING:
@@ -949,7 +950,8 @@ static int process_next_pop3_line(openli_email_worker_t *state,
     return 0;
 }
 
-void free_pop3_session_state(emailsession_t *sess, void *pop3state) {
+void free_pop3_session_state(openli_email_worker_t *state,
+        emailsession_t *sess, void *pop3state) {
     pop3_session_t *pop3sess;
 
     if (pop3state == NULL) {

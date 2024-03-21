@@ -2315,6 +2315,8 @@ int main(int argc, char *argv[]) {
         glob->emailworkers[i].default_compress_delivery =
                 OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
 
+        glob->emailworkers[i].log_level = OPENLI_EMAIL_WORKER_LOG_DEBUG;
+
         pthread_create(&(glob->emailworkers[i].threadid), NULL,
                 start_email_worker_thread, (void *)&(glob->emailworkers[i]));
         pthread_setname_np(glob->emailworkers[i].threadid, name);

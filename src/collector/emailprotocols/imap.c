@@ -233,7 +233,7 @@ static int extract_imap_email_sender(openli_email_worker_t *state,
     }
 
     imapsess->mail_sender = extracted;
-    add_email_participant(sess, imapsess->mail_sender, 1);
+    add_email_participant(state, sess, imapsess->mail_sender, 1);
     free(safecopy);
 
     return r;
@@ -510,8 +510,8 @@ static int save_imap_command(imap_session_t *sess, char *sesskey) {
     return index;
 }
 
-static int decode_login_command(emailsession_t *sess,
-        imap_session_t *imapsess) {
+static int decode_login_command(openli_email_worker_t *state,
+        emailsession_t *sess, imap_session_t *imapsess) {
 
     char *loginmsg;
     int msglen;
@@ -567,7 +567,7 @@ static int decode_login_command(emailsession_t *sess,
         imapsess->mailbox = strdup(username);
     }
 
-    add_email_participant(sess, imapsess->mailbox, 0);
+    add_email_participant(state, sess, imapsess->mailbox, 0);
 
     /* replace password with masked credentials */
     if (sess->mask_credentials) {
@@ -589,7 +589,7 @@ loginparsefail:
 }
 
 static int decode_plain_auth_content(char *authmsg, imap_session_t *imapsess,
-        emailsession_t *sess) {
+        emailsession_t *sess, openli_email_worker_t *state) {
 
     char decoded[2048];
     char reencoded[2048];
@@ -642,7 +642,7 @@ static int decode_plain_auth_content(char *authmsg, imap_session_t *imapsess,
     imapsess->mailbox = strdup(ptr);
 
     /* add "mailbox" as a recipient for this session */
-    add_email_participant(sess, imapsess->mailbox, 0);
+    add_email_participant(state, sess, imapsess->mailbox, 0);
 
     /* replace encoded credentials, if requested by the user */
     if (sess->mask_credentials) {
@@ -675,8 +675,8 @@ static inline char *clone_authentication_message(imap_session_t *imapsess) {
     return authmsg;
 }
 
-static int decode_authentication_command(emailsession_t *sess,
-        imap_session_t *imapsess) {
+static int decode_authentication_command(openli_email_worker_t *state,
+        emailsession_t *sess, imap_session_t *imapsess) {
 
     char *authmsg;
     int msglen, r;
@@ -711,7 +711,7 @@ static int decode_authentication_command(emailsession_t *sess,
         }
 
         if (imapsess->auth_type == OPENLI_EMAIL_AUTH_PLAIN) {
-            r = decode_plain_auth_content(authmsg, imapsess, sess);
+            r = decode_plain_auth_content(authmsg, imapsess, sess, state);
             imapsess->next_command_type = OPENLI_IMAP_COMMAND_NONE;
             imapsess->next_comm_start = 0;
             imapsess->reply_start = 0;
@@ -827,7 +827,8 @@ static void reset_imap_saved_command(imap_command_t *comm) {
     }
 }
 
-void free_imap_session_state(emailsession_t *sess, void *imapstate) {
+void free_imap_session_state(openli_email_worker_t *state,
+        emailsession_t *sess, void *imapstate) {
     imap_session_t *imapsess;
     int i;
 
@@ -1334,7 +1335,8 @@ static int find_next_crlf(imap_session_t *sess, int start_index) {
     return 0;
 }
 
-static int find_command_end(emailsession_t *sess, imap_session_t *imapsess) {
+static int find_command_end(openli_email_worker_t *state,
+        emailsession_t *sess, imap_session_t *imapsess) {
     int r, ind;
 
     r = find_next_crlf(imapsess, imapsess->next_comm_start);
@@ -1351,7 +1353,7 @@ static int find_command_end(emailsession_t *sess, imap_session_t *imapsess) {
         sess->currstate = OPENLI_IMAP_STATE_AUTHENTICATING;
         imapsess->auth_command_index = ind;
 
-        r = decode_authentication_command(sess, imapsess);
+        r = decode_authentication_command(state, sess, imapsess);
         return r;
         /* Don't count client octets just yet, since we could be rewriting
          * the auth tokens shortly...
@@ -1362,7 +1364,7 @@ static int find_command_end(emailsession_t *sess, imap_session_t *imapsess) {
         sess->currstate = OPENLI_IMAP_STATE_AUTHENTICATING;
         imapsess->auth_command_index = ind;
 
-        return decode_login_command(sess, imapsess);
+        return decode_login_command(state, sess, imapsess);
 
     } else {
         sess->client_octets += (imapsess->contbufread - imapsess->next_comm_start);
@@ -1599,8 +1601,8 @@ static int read_imap_while_appending_state(emailsession_t *sess,
     return 0;
 }
 
-static int read_imap_while_auth_state(emailsession_t *sess,
-        imap_session_t *imapsess) {
+static int read_imap_while_auth_state(openli_email_worker_t *state,
+        emailsession_t *sess, imap_session_t *imapsess) {
 
     /* Our goal here is to just consume any unconventional exchanges
      * between client and server that might be occurring during
@@ -1653,7 +1655,8 @@ static int read_imap_while_auth_state(emailsession_t *sess,
                     logger(LOG_INFO, "OpenLI: failed to decode plain auth content for IMAP session: %s", sess->key);
                     r = 1;
                 } else {
-                    r = decode_plain_auth_content(authmsg, imapsess, sess);
+                    r = decode_plain_auth_content(authmsg, imapsess, sess,
+                            state);
                 }
                 free(authmsg);
             }
@@ -1811,7 +1814,7 @@ static int find_next_imap_message(openli_email_worker_t *state,
 
     if (sess->currstate == OPENLI_IMAP_STATE_AUTHENTICATING) {
         /* Handle various auth response behaviours, as per RFC9051 */
-        return read_imap_while_auth_state(sess, imapsess);
+        return read_imap_while_auth_state(state, sess, imapsess);
     }
 
     if (sess->currstate == OPENLI_IMAP_STATE_IDLING) {
@@ -1990,7 +1993,7 @@ static int process_next_imap_state(openli_email_worker_t *state,
         r = find_partial_reply_end(sess, imapsess);
         return r;
     } else {
-        r = find_command_end(sess, imapsess);
+        r = find_command_end(state, sess, imapsess);
         return r;
     }
 

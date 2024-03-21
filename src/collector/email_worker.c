@@ -52,6 +52,16 @@
 #include "timed_intercept.h"
 #include "collector.h"
 
+#define EMAIL_VERBOSE(state, format, ...) \
+    if (state->log_level <= OPENLI_EMAIL_WORKER_LOG_EXTREME) { \
+        logger(LOG_INFO, format, __VA_ARGS__); \
+    }
+
+#define EMAIL_DEBUG(state, format, ...) \
+    if (state->log_level <= OPENLI_EMAIL_WORKER_LOG_DEBUG) { \
+        logger(LOG_INFO, format, __VA_ARGS__); \
+    }
+
 static inline const char *email_type_to_string(openli_email_type_t t) {
     if (t == OPENLI_EMAIL_TYPE_POP3) {
         return "POP3";
@@ -429,15 +439,37 @@ int extract_email_sender_from_body(openli_email_worker_t *state,
     memset(fromaddr, 0, 2048);
     search = bodycontent;
 
+    EMAIL_DEBUG(state, "Email worker %d: extracting sender from mail body content for session %s",
+            state->emailid, sess->key);
+
     while (search) {
         next = strstr(search, "\r\n");
 
+        if (next && next - search >= 6) {
+            EMAIL_DEBUG(state, "Email worker %d: looking at header starting with %c%c%c%c%c%c",
+                    state->emailid, *search, *(search + 1),
+                    *(search + 2), *(search + 3), *(search + 4),
+                    *(search + 5));
+        } else if (next) {
+            EMAIL_DEBUG(state, "Email worker %d: skipping short header...",
+                    state->emailid);
+        } else {
+            EMAIL_DEBUG(state, "Email worker %d: next is NULL",
+                    state->emailid);
+        }
+
         if (strncasecmp(search, "From: ", 6) == 0) {
             if (next - search > 2048) {
+                EMAIL_DEBUG(state,
+                        "Email worker %d: From address is very long... %d",
+                        state->emailid, next - search);
                 next = search + 2048;
             }
             memcpy(fromaddr, (search + 6), next - (search + 6));
             found = 1;
+            EMAIL_DEBUG(state,
+                    "Email worker %d: From header has been found and copied",
+                    state->emailid);
             break;
         }
         if (next) {
@@ -445,9 +477,13 @@ int extract_email_sender_from_body(openli_email_worker_t *state,
         } else {
             search = next;
         }
+        EMAIL_DEBUG(state, "Email worker %d: not a match, trying next header",
+                state->emailid);
     }
 
     if (!found) {
+        EMAIL_DEBUG(state, "Email worker %d: no From: header was found",
+                state->emailid);
         return 0;
     }
     /* Account for From: fields which take the form:
@@ -457,6 +493,8 @@ int extract_email_sender_from_body(openli_email_worker_t *state,
     /* Note: addresses that contain '<' or '>' within quotes are going
      * to cause problems for this code...
      */
+    EMAIL_DEBUG(state, "Email worker %d: stripping <> from address",
+            state->emailid);
     lt = strchr(fromaddr, '<');
     gt = strrchr(fromaddr, '>');
 
@@ -467,14 +505,25 @@ int extract_email_sender_from_body(openli_email_worker_t *state,
         *gt = '\0';
     }
 
+
+    EMAIL_DEBUG(state, "Email worker %d: stripping complete, saving address",
+            state->emailid);
     *extracted = strdup(fromstart);
+    EMAIL_DEBUG(state, "Email worker %d: address successfully duplicated",
+            state->emailid);
     return 1;
 }
 
 
-void add_email_participant(emailsession_t *sess, char *address, int issender) {
+void add_email_participant(openli_email_worker_t *state,
+        emailsession_t *sess, char *address, int issender) {
 
     email_participant_t *part;
+
+    EMAIL_DEBUG(state,
+            "Email worker %d: registering %s as participant in session %s: %s",
+            state->emailid, address, sess->key,
+            issender ? "sender" : "recipient");
 
     if (!issender) {
         HASH_FIND(hh, sess->participants, address, strlen(address), part);
@@ -494,15 +543,22 @@ void add_email_participant(emailsession_t *sess, char *address, int issender) {
         sess->sender.is_sender = 1;
     }
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: done registering participant for session %s",
+            state->emailid, sess->key);
 }
 
-void clear_email_participant_list(emailsession_t *sess) {
+void clear_email_participant_list(openli_email_worker_t *state,
+        emailsession_t *sess) {
 
     email_participant_t *part, *tmp;
 
     if (!sess) {
         return;
     }
+    EMAIL_DEBUG(state, "Email worker %d: clearing participant list for %s",
+            state->emailid, sess->key);
+
     HASH_ITER(hh, sess->participants, part, tmp) {
         HASH_DELETE(hh, sess->participants, part);
         if (part->emailaddr) {
@@ -511,6 +567,8 @@ void clear_email_participant_list(emailsession_t *sess) {
         free(part);
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: participant list for %s cleared",
+            state->emailid, sess->key);
 }
 
 void clear_email_sender(emailsession_t *sess) {
@@ -533,11 +591,17 @@ static void free_email_session(openli_email_worker_t *state,
         return;
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: removing email session %s",
+            state->emailid, sess->key);
+
     JSLFA(rc, sess->ccs_sent);
     JSLFA(rc, sess->iris_sent);
 
     clear_email_sender(sess);
-    clear_email_participant_list(sess);
+    clear_email_participant_list(state, sess);
+
+    EMAIL_DEBUG(state, "Email worker %d: preparing to shutdown timer",
+            state->emailid);
 
     if (sess->timeout_ev) {
         sync_epoll_t *ev, *found;
@@ -551,6 +615,9 @@ static void free_email_session(openli_email_worker_t *state,
 
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: clearing held_captured",
+            state->emailid);
+
     if (sess->held_captured) {
         for (i = 0; i < sess->held_captured_size; i++) {
             if (sess->held_captured[i]) {
@@ -561,18 +628,22 @@ static void free_email_session(openli_email_worker_t *state,
         free(sess->held_captured);
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: freeing protocol-level session state",
+            state->emailid);
     if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
-        free_smtp_session_state(sess, sess->proto_state);
+        free_smtp_session_state(state, sess, sess->proto_state);
     }
 
     if (sess->protocol == OPENLI_EMAIL_TYPE_IMAP) {
-        free_imap_session_state(sess, sess->proto_state);
+        free_imap_session_state(state, sess, sess->proto_state);
     }
 
     if (sess->protocol == OPENLI_EMAIL_TYPE_POP3) {
-        free_pop3_session_state(sess, sess->proto_state);
+        free_pop3_session_state(state, sess, sess->proto_state);
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: freeing remaining strings",
+            state->emailid);
     if (sess->serveraddr) {
         free(sess->serveraddr);
     }
@@ -590,6 +661,8 @@ static void free_email_session(openli_email_worker_t *state,
     }
     free(sess);
 
+    EMAIL_DEBUG(state, "Email worker %d: session has been freed",
+            state->emailid);
 }
 
 static void update_email_session_timeout(openli_email_worker_t *state,
@@ -597,15 +670,27 @@ static void update_email_session_timeout(openli_email_worker_t *state,
     sync_epoll_t *timerev, *syncev;
     struct itimerspec its;
 
+    EMAIL_DEBUG(state, "Email worker %d: updating session timeout for %s",
+            state->emailid, sess->key);
+
     if (sess->timeout_ev) {
+        EMAIL_DEBUG(state, "Email worker %d: session already has a timeout event",
+                state->emailid);
         timerev = (sync_epoll_t *)(sess->timeout_ev);
 
         HASH_FIND(hh, state->timeouts, &(timerev->fd), sizeof(int), syncev);
         if (syncev) {
+            EMAIL_DEBUG(state, "Email worker %d: removing active timer",
+                    state->emailid);
             HASH_DELETE(hh, state->timeouts, syncev);
+        } else {
+            EMAIL_DEBUG(state, "Email worker %d: timer was not active",
+                    state->emailid);
         }
         close(timerev->fd);
     } else {
+        EMAIL_DEBUG(state, "Email worker %d: creating timeout event",
+                state->emailid);
         timerev = (sync_epoll_t *) calloc(1, sizeof(sync_epoll_t));
     }
 
@@ -620,6 +705,8 @@ static void update_email_session_timeout(openli_email_worker_t *state,
         its.it_value.tv_sec = 600;
     }
     pthread_rwlock_unlock(state->glob_config_mutex);
+    EMAIL_DEBUG(state, "Email worker %d: set session timeout to %d seconds",
+            state->emailid, its.it_value.tv_sec);
 
     its.it_value.tv_nsec = 0;
     its.it_interval.tv_sec = 0;
@@ -630,9 +717,12 @@ static void update_email_session_timeout(openli_email_worker_t *state,
     timerev->fd = timerfd_create(CLOCK_MONOTONIC, 0);
     timerfd_settime(timerev->fd, 0, &its, NULL);
 
+    EMAIL_DEBUG(state, "Email worker %d: timer has been set", state->emailid);
     timerev->ptr = sess;
     HASH_ADD_KEYPTR(hh, state->timeouts, &(timerev->fd), sizeof(int), timerev);
 
+    EMAIL_DEBUG(state, "Email worker %d: timer has been added to timeouts map",
+            state->emailid);
 }
 
 void free_captured_email(openli_email_captured_t *cap) {
@@ -682,6 +772,8 @@ static void start_email_intercept(openli_email_worker_t *state,
     openli_export_recv_t *expmsg;
     email_target_t *tgt, *tmp;
 
+    EMAIL_DEBUG(state, "Email worker %d: enabling interception for %s",
+            state->emailid, em->common.liid);
     if (state->tracker_threads <= 1) {
         em->common.seqtrackerid = 0;
     } else {
@@ -691,18 +783,30 @@ static void start_email_intercept(openli_email_worker_t *state,
     HASH_ADD_KEYPTR(hh_liid, state->allintercepts, em->common.liid,
             em->common.liid_len, em);
 
+    EMAIL_DEBUG(state, "Email worker %d: added intercept to allintercepts map",
+            state->emailid);
     if (addtargets) {
+        EMAIL_DEBUG(state, "Email worker %d: updating alltargets",
+                state->emailid);
         HASH_ITER(hh, em->targets, tgt, tmp) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: adding intercept to target %s in alltargets",
+                    state->emailid, tgt->address);
             if (add_intercept_to_email_user_intercept_list(
                     &(state->alltargets), em, tgt) < 0) {
                 logger(LOG_INFO, "OpenLI: error while adding all email targets for intercept %s", em->common.liid);
                 break;
             }
         }
+        EMAIL_DEBUG(state, "Email worker %d: alltargets updates complete",
+                state->emailid);
     }
 
     if (state->emailid == 0) {
         expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+        EMAIL_DEBUG(state,
+                "Email worker %d: informing seqtracker %d about this new intercept",
+                state->emailid, em->common.seqtrackerid);
         expmsg->type = OPENLI_EXPORT_INTERCEPT_DETAILS;
         expmsg->data.cept.liid = strdup(em->common.liid);
         expmsg->data.cept.authcc = strdup(em->common.authcc);
@@ -718,6 +822,8 @@ static void start_email_intercept(openli_email_worker_t *state,
         publish_openli_msg(state->zmq_pubsocks[em->common.seqtrackerid],
                 expmsg);
     }
+    EMAIL_DEBUG(state, "Email worker %d: intercept is now enabled",
+            state->emailid);
     em->awaitingconfirm = 0;
 }
 
@@ -726,18 +832,29 @@ static int update_modified_email_intercept(openli_email_worker_t *state,
     openli_export_recv_t *expmsg;
     int encodingchanged = 0, changed = 0;
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: updating a modified email intercept %s",
+            state->emailid, found->common.liid);
+
     found->delivercompressed = decode->delivercompressed;
 
     encodingchanged = update_modified_intercept_common(&(found->common),
             &(decode->common), OPENLI_INTERCEPT_TYPE_EMAIL, &changed);
 
     if (encodingchanged < 0) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: update_modified_intercept_common returned -1",
+                state->emailid);
         free_single_emailintercept(decode);
         return -1;
     }
 
     if (encodingchanged) {
         expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+        EMAIL_DEBUG(state,
+                "Email worker %d: changes that affect encoding, need to send message to seqtracker %d",
+                state->emailid, found->common.seqtrackerid);
+
         expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
         expmsg->data.cept.liid = strdup(found->common.liid);
         expmsg->data.cept.authcc = strdup(found->common.authcc);
@@ -752,7 +869,15 @@ static int update_modified_email_intercept(openli_email_worker_t *state,
 
         publish_openli_msg(state->zmq_pubsocks[found->common.seqtrackerid],
                 expmsg);
+
+    } else {
+        EMAIL_DEBUG(state,
+                "Email worker %d: no changes that affect encoding",
+                state->emailid);
     }
+    EMAIL_DEBUG(state,
+            "Email worker %d: update of modified intercept completed",
+            state->emailid);
     free_single_emailintercept(decode);
     return 0;
 }
@@ -764,6 +889,9 @@ static void remove_email_intercept(openli_email_worker_t *state,
     int i;
     email_target_t *tgt, *tmp;
 
+    EMAIL_DEBUG(state, "Email worker %d: removing email intercept %s",
+            state->emailid, em->common.liid);
+
     /* Either this intercept has been explicitly withdrawn, in which case
      * we need to also purge any target addresses for it, OR the
      * intercept has been reannounced so we're going to "update" it. For an
@@ -772,6 +900,8 @@ static void remove_email_intercept(openli_email_worker_t *state,
      */
     HASH_ITER(hh, em->targets, tgt, tmp) {
         if (removetargets) {
+            EMAIL_DEBUG(state, "Email worker %d: removing target %s",
+                    state->emailid, tgt->address);
             if (remove_intercept_from_email_user_intercept_list(
                     &(state->alltargets), em, tgt) < 0) {
                 logger(LOG_INFO, "OpenLI: error while removing all email targets for intercept %s", em->common.liid);
@@ -779,6 +909,8 @@ static void remove_email_intercept(openli_email_worker_t *state,
             }
         } else {
             /* Flag this target as needing confirmation */
+            EMAIL_DEBUG(state, "Email worker %d: flagging target %s",
+                    state->emailid, tgt->address);
             tgt->awaitingconfirm = 1;
         }
     }
@@ -786,6 +918,8 @@ static void remove_email_intercept(openli_email_worker_t *state,
     HASH_DELETE(hh_liid, state->allintercepts, em);
 
     if (state->emailid == 0 && removetargets != 0) {
+        EMAIL_DEBUG(state, "Email worker %d: informing seqtracker %d and forwarding threads that the intercept is over",
+                state->emailid, em->common.seqtrackerid);
         expmsg = (openli_export_recv_t *)calloc(1,
                 sizeof(openli_export_recv_t));
         expmsg->type = OPENLI_EXPORT_INTERCEPT_OVER;
@@ -821,6 +955,8 @@ static void remove_email_intercept(openli_email_worker_t *state,
     }
 
     free_single_emailintercept(em);
+    EMAIL_DEBUG(state, "Email worker %d: intercept removal completed",
+            state->emailid);
 
 }
 
@@ -828,25 +964,30 @@ static int update_default_email_compression(openli_email_worker_t *state,
         provisioner_msg_t *provmsg) {
 
     uint8_t newval;
+    char newval_str[256];
 
+    EMAIL_DEBUG(state, "Email worker %d: updating default compression",
+            state->emailid);
     if (decode_default_email_compression_announcement(provmsg->msgbody,
             provmsg->msglen, &newval) < 0) {
         logger(LOG_INFO, "OpenLI: email worker failed to decode default email compression update message from provisioner");
         return -1;
     }
 
+    email_decompress_option_as_string(newval, newval_str, 256);
+    EMAIL_DEBUG(state, "Email worker %d: derived new value is %s (%u)",
+            state->emailid, newval_str, newval);
     if (newval != OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT &&
             newval != OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET) {
         if (state->emailid == 0 && newval != state->default_compress_delivery) {
-            char newval_str[256];
-
-            email_decompress_option_as_string(newval, newval_str, 256);
             logger(LOG_INFO, "OpenLI: email workers have changed the default email compression delivery behaviour to '%s'", newval_str);
         }
 
         state->default_compress_delivery = newval;
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: default compression updated successfully",
+            state->emailid);
     return 0;
 }
 
@@ -856,6 +997,8 @@ static int add_new_email_intercept(openli_email_worker_t *state,
     emailintercept_t *em, *found;
     int ret = 0;
 
+    EMAIL_DEBUG(state, "Email worker %d: adding new email intercept",
+            state->emailid);
     em = calloc(1, sizeof(emailintercept_t));
 
     if (decode_emailintercept_start(msg->msgbody, msg->msglen, em) < 0) {
@@ -863,6 +1006,8 @@ static int add_new_email_intercept(openli_email_worker_t *state,
         return -1;
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: intercept to be added is %s",
+            state->emailid, em->common.liid);
     HASH_FIND(hh_liid, state->allintercepts, em->common.liid,
             em->common.liid_len, found);
 
@@ -871,6 +1016,8 @@ static int add_new_email_intercept(openli_email_worker_t *state,
         /* Don't halt any target intercepts just yet -- hopefully a target
          * update is going to follow this...
          */
+        EMAIL_DEBUG(state, "Email worker %d: we already know about this intercept, flagging targets as confirmed",
+                state->emailid);
         HASH_ITER(hh, found->targets, tgt, tmp) {
             tgt->awaitingconfirm = 1;
         }
@@ -891,7 +1038,8 @@ static int add_new_email_intercept(openli_email_worker_t *state,
         }
     }
 
-
+    EMAIL_DEBUG(state, "Email worker %d: finished adding new intercept",
+            state->emailid);
     return ret;
 }
 
@@ -900,6 +1048,8 @@ static int modify_email_intercept(openli_email_worker_t *state,
 
     emailintercept_t *decode, *found;
 
+    EMAIL_DEBUG(state, "Email worker %d: modifying email intercept",
+            state->emailid);
     decode = calloc(1, sizeof(emailintercept_t));
     if (decode_emailintercept_modify(provmsg->msgbody, provmsg->msglen,
             decode) < 0) {
@@ -907,14 +1057,20 @@ static int modify_email_intercept(openli_email_worker_t *state,
         return -1;
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: intercept to be modified is %s",
+            state->emailid, decode->common.liid);
     HASH_FIND(hh_liid, state->allintercepts, decode->common.liid,
             decode->common.liid_len, found);
     if (!found) {
+        EMAIL_DEBUG(state, "Email worker %d: did not find intercept %s in the intercept map, creating instead", decode->common.liid);
         start_email_intercept(state, decode, 0);
         return 0;
     }
+    EMAIL_DEBUG(state, "Email worker %d: found intercept %s in the intercept map", decode->common.liid);
 
     update_modified_email_intercept(state, found, decode);
+    EMAIL_DEBUG(state, "Email worker %d: intercept modification complete",
+            state->emailid);
     return 0;
 }
 
@@ -923,12 +1079,17 @@ static int halt_email_intercept(openli_email_worker_t *state,
 
     emailintercept_t *decode, *found;
 
+    EMAIL_DEBUG(state, "Email worker %d: halting email intercept",
+            state->emailid);
     decode = calloc(1, sizeof(emailintercept_t));
     if (decode_emailintercept_halt(provmsg->msgbody, provmsg->msglen,
             decode) < 0) {
         logger(LOG_INFO, "OpenLI: received invalid email intercept withdrawal from provisioner");
         return -1;
     }
+
+    EMAIL_DEBUG(state, "Email worker %d: intercept to be halted is %s",
+            state->emailid, decode->common.liid);
 
     HASH_FIND(hh_liid, state->allintercepts, decode->common.liid,
             decode->common.liid_len, found);
@@ -937,9 +1098,11 @@ static int halt_email_intercept(openli_email_worker_t *state,
         free_single_emailintercept(decode);
         return -1;
     }
+    EMAIL_DEBUG(state, "Email worker %d: found intercept %s in the intercept map", decode->common.liid);
 
     remove_email_intercept(state, found, 1);
     free_single_emailintercept(decode);
+    EMAIL_DEBUG(state, "Email worker %d: halted email intercept", state->emailid);
     return 0;
 }
 
@@ -956,16 +1119,26 @@ static int process_email_target_withdraw(openli_email_worker_t *state,
         return -1;
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: found intercept %s for target withdrawal",
+            state->emailid, liid);
+
     if (remove_intercept_from_email_user_intercept_list(&(state->alltargets),
             found, tgt) < 0) {
         logger(LOG_INFO, "OpenLI: email worker thread %d failed to remove email target for intercept %s", state->emailid, liid);
         return -1;
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: removed intercept %s from list of intercepts for address %s",
+            state->emailid, liid, tgt->address);
     HASH_FIND(hh, found->targets, tgt->address, strlen(tgt->address), tgtfound);
     if (tgtfound) {
         HASH_DELETE(hh, found->targets, tgtfound);
         free_single_email_target(tgtfound);
+        EMAIL_DEBUG(state, "Email worker %d: removed target %s from intercept %s",
+                state->emailid, tgt->address, liid);
+    } else {
+        EMAIL_DEBUG(state, "Email worker %d: target %s was already removed from intercept %s?",
+                state->emailid, tgt->address, liid);
     }
 
     return 0;
@@ -978,6 +1151,8 @@ static int remove_email_target(openli_email_worker_t *state,
     char liid[256];
     int ret;
 
+    EMAIL_DEBUG(state, "Email worker %d: removing email target",
+            state->emailid);
     tgt = calloc(1, sizeof(email_target_t));
 
     if (decode_email_target_withdraw(provmsg->msgbody, provmsg->msglen,
@@ -985,9 +1160,13 @@ static int remove_email_target(openli_email_worker_t *state,
         logger(LOG_INFO, "OpenLI: email worker %d received invalid email target withdrawal from provisioner", state->emailid);
         return -1;
     }
+    EMAIL_DEBUG(state, "Email worker %d: withdrawal is for target %s for LIID %s",
+            state->emailid, tgt->address, liid);
 
     ret = process_email_target_withdraw(state, tgt, liid);
     free_single_email_target(tgt);
+    EMAIL_DEBUG(state, "Email worker %d: target removal completed",
+            state->emailid);
     return ret;
 }
 
@@ -1002,6 +1181,9 @@ static int add_email_target(openli_email_worker_t *state,
     unsigned char shaspace[EVP_MAX_MD_SIZE];
     unsigned int sha_len;
     int i;
+
+    EMAIL_DEBUG(state, "Email worker %d: adding new email target",
+            state->emailid);
 
     tgt = calloc(1, sizeof(email_target_t));
     if (decode_email_target_announcement(provmsg->msgbody, provmsg->msglen,
@@ -1018,6 +1200,9 @@ static int add_email_target(openli_email_worker_t *state,
         logger(LOG_INFO, "OpenLI: insanely long email address for %s target\n", liid);
         return -1;
     }
+
+    EMAIL_DEBUG(state, "Email worker %d: target address is %s, liid is %s",
+            state->emailid, tgt->address, liid);
 
 #ifdef HAVE_LIBSSL_11
     ctx = EVP_MD_CTX_new();
@@ -1039,6 +1224,8 @@ static int add_email_target(openli_email_worker_t *state,
 #else
     EVP_MD_CTX_destroy(ctx);
 #endif
+    EMAIL_DEBUG(state, "Email worker %d: calculated sha512 of target address",
+            state->emailid);
 
     HASH_FIND(hh_liid, state->allintercepts, liid, strlen(liid), found);
     if (!found) {
@@ -1046,6 +1233,8 @@ static int add_email_target(openli_email_worker_t *state,
         liid, state->emailid);
         return -1;
     }
+    EMAIL_DEBUG(state, "Email worker %d: found intercept entry for %s",
+            state->emailid, liid);
 
     if (add_intercept_to_email_user_intercept_list(&(state->alltargets),
             found, tgt) < 0) {
@@ -1053,14 +1242,24 @@ static int add_email_target(openli_email_worker_t *state,
         return -1;
     }
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: added %s as an intercept for this target address",
+            state->emailid, liid);
+
     HASH_FIND(hh, found->targets, tgt->address, strlen(tgt->address), tgtfound);
     if (!tgtfound) {
         tgt->awaitingconfirm = 0;
         HASH_ADD_KEYPTR(hh, found->targets, tgt->address, strlen(tgt->address),
                 tgt);
+        EMAIL_DEBUG(state,
+                "Email worker %d: added address to target list for intercept %s",
+                state->emailid, liid);
     } else {
         tgtfound->awaitingconfirm = 0;
         free_single_email_target(tgt);
+        EMAIL_DEBUG(state,
+                "Email worker %d: confirmed address as target for intercept %s",
+                state->emailid, liid);
     }
     return 0;
 }
@@ -1069,12 +1268,20 @@ static void flag_all_email_intercepts(openli_email_worker_t *state) {
     emailintercept_t *em, *tmp;
     email_target_t *tgt, *tmp2;
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: flagging all intercepts as unconfirmed",
+            state->emailid);
     HASH_ITER(hh_liid, state->allintercepts, em, tmp) {
+        EMAIL_DEBUG(state, "Email worker %d: flagged intercept %s...",
+                state->emailid, em->common.liid);
         em->awaitingconfirm = 1;
         HASH_ITER(hh, em->targets, tgt, tmp2) {
+            EMAIL_DEBUG(state, "Email worker %d:     flagged target %s for %s...",
+                    state->emailid, tgt->address, em->common.liid);
             tgt->awaitingconfirm = 1;
         }
     }
+    EMAIL_DEBUG(state, "Email worker %d: flagging completed", state->emailid);
 }
 
 static void disable_unconfirmed_email_intercepts(openli_email_worker_t *state)
@@ -1082,17 +1289,35 @@ static void disable_unconfirmed_email_intercepts(openli_email_worker_t *state)
     emailintercept_t *em, *tmp;
     email_target_t *tgt, *tmp2;
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: disabling unconfirmed intercepts",
+            state->emailid);
     HASH_ITER(hh_liid, state->allintercepts, em, tmp) {
+        EMAIL_DEBUG(state, "Email worker %d: looking at %s...",
+                state->emailid, em->common.liid);
         if (em->awaitingconfirm) {
+            EMAIL_DEBUG(state, "Email worker %d: %s is not confirmed, removing",
+                    state->emailid, em->common.liid);
             remove_email_intercept(state, em, 1);
         } else {
+            EMAIL_DEBUG(state, "Email worker %d: %s is confirmed, checking targets...",
+                    state->emailid, em->common.liid);
+
             HASH_ITER(hh, em->targets, tgt, tmp2) {
                 if (tgt->awaitingconfirm) {
+                    EMAIL_DEBUG(state, "Email worker %d: ... %s WITHDRAW",
+                            state->emailid, tgt->address);
                     process_email_target_withdraw(state, tgt, em->common.liid);
+                } else {
+                    EMAIL_DEBUG(state, "Email worker %d: ... %s CONFIRMED",
+                            state->emailid, tgt->address);
                 }
             }
         }
     }
+    EMAIL_DEBUG(state,
+            "Email worker %d: unconfirmed intercepts have now been purged",
+            state->emailid);
 }
 
 static int handle_provisioner_message(openli_email_worker_t *state,
@@ -1144,6 +1369,8 @@ static int process_sync_thread_message(openli_email_worker_t *state) {
     openli_export_recv_t *msg;
     int x;
 
+    EMAIL_DEBUG(state, "Email worker %d: processing messages from sync thread",
+            state->emailid);
     do {
         x = zmq_recv(state->zmq_ii_sock, &msg, sizeof(msg),
                 ZMQ_DONTWAIT);
@@ -1159,6 +1386,8 @@ static int process_sync_thread_message(openli_email_worker_t *state) {
         }
 
         if (msg->type == OPENLI_EXPORT_HALT) {
+            EMAIL_DEBUG(state, "Email worker %d: HALT message received",
+                    state->emailid);
             free(msg);
             return -1;
         }
@@ -1172,6 +1401,9 @@ static int process_sync_thread_message(openli_email_worker_t *state) {
         free(msg);
     } while (x > 0);
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: done processing messages from sync thread",
+            state->emailid);
     return 1;
 }
 
@@ -1182,6 +1414,9 @@ static int find_and_update_active_session(openli_email_worker_t *state,
     emailsession_t *sess;
     int r = 0, i;
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: running find_and_update_active_session()",
+            state->emailid);
     if (cap->session_id == NULL) {
         logger(LOG_INFO,
                 "OpenLI: error creating email session -- session_id is NULL");
@@ -1191,6 +1426,8 @@ static int find_and_update_active_session(openli_email_worker_t *state,
 
     snprintf(sesskey, 256, "%s-%s", email_type_to_string(cap->type),
             cap->session_id);
+    EMAIL_DEBUG(state, "Email worker %d: session key is %s", state->emailid,
+            sesskey);
 
     HASH_FIND(hh, state->activesessions, sesskey, strlen(sesskey), sess);
     if (!sess) {
@@ -1198,6 +1435,9 @@ static int find_and_update_active_session(openli_email_worker_t *state,
         init_email_session(sess, cap, sesskey, state);
         HASH_ADD_KEYPTR(hh, state->activesessions, sess->key,
                 strlen(sess->key), sess);
+        EMAIL_DEBUG(state, "Email worker %d: session key %s does not exist in active sessions map, creating new entry", state->emailid, sesskey);
+    } else {
+        EMAIL_DEBUG(state, "Email worker %d: session key %s was found in active sessions map", state->emailid, sesskey);
 
     }
 
@@ -1206,6 +1446,9 @@ static int find_and_update_active_session(openli_email_worker_t *state,
     if (cap->part_id == 0xFFFFFFFF) {
         cap->part_id = sess->next_expected_captured;
     }
+
+    EMAIL_DEBUG(state, "Email worker %d: part ID = %u, expecting %u",
+            state->emailid, cap->part_id, sess->next_expected_captured);
 
     if (cap->part_id < sess->next_expected_captured) {
         logger(LOG_INFO,
@@ -1230,6 +1473,9 @@ static int find_and_update_active_session(openli_email_worker_t *state,
             sess->held_captured[i] = NULL;
         }
         sess->held_captured_size += 16;
+        EMAIL_DEBUG(state,
+            "Email worker %d: increased held_captured size to %d",
+            state->emailid, sess->held_captured_size);
     }
 
     if (sess->held_captured[cap->part_id] != NULL) {
@@ -1241,11 +1487,17 @@ static int find_and_update_active_session(openli_email_worker_t *state,
 
     sess->held_captured[cap->part_id] = cap;
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: looping over available parts for '%s'...",
+            state->emailid, sess->key);
     while (sess->next_expected_captured < sess->held_captured_size &&
             sess->held_captured[sess->next_expected_captured] != NULL) {
 
         cap = sess->held_captured[sess->next_expected_captured];
 
+        EMAIL_DEBUG(state, "Email worker %d: updating %s session '%s'",
+                state->emailid, email_type_to_string(sess->protocol),
+                sess->key);
         if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
             r = update_smtp_session_by_ingestion(state, sess, cap);
         } else if (sess->protocol == OPENLI_EMAIL_TYPE_IMAP) {
@@ -1263,14 +1515,21 @@ static int find_and_update_active_session(openli_email_worker_t *state,
             free_email_session(state, sess);
             return r;
         } else if (r == 1) {
+            EMAIL_DEBUG(state, "Email worker %d: session '%s' has ended",
+                    state->emailid, sess->key);
             HASH_DELETE(hh, state->activesessions, sess);
             free_email_session(state, sess);
             return r;
         }
+        EMAIL_DEBUG(state,
+                "Email worker %d: update for %s session '%s' was successful",
+                    state->emailid, sess->key);
         free_captured_email(cap);
         sess->held_captured[sess->next_expected_captured] = NULL;
         sess->next_expected_captured ++;
     }
+    EMAIL_DEBUG(state, "Email worker %d: no more available parts for '%s'-- next expected part is %u",
+            state->emailid, sess->key, sess->next_expected_captured);
 
     return 0;
 }
@@ -1285,6 +1544,7 @@ static int process_received_packet(openli_email_worker_t *state) {
                 ZMQ_DONTWAIT);
         if (rc < 0) {
             if (errno == EAGAIN) {
+                EMAIL_DEBUG(state, "Email worker %d: no more packets available from collector threads", state->emailid);
                 return 0;
             }
             logger(LOG_INFO,
@@ -1292,6 +1552,7 @@ static int process_received_packet(openli_email_worker_t *state) {
             return -1;
         }
 
+        EMAIL_DEBUG(state, "Email worker %d: received packet from collector threads", state->emailid);
         if ((x = convert_packet_to_email_captured(state, recvd.data.pkt,
                 recvd.type, &cap)) < 0) {
             logger(LOG_INFO, "OpenLI: unable to derive email session ID from received packet in email thread %d", state->emailid);
@@ -1301,19 +1562,25 @@ static int process_received_packet(openli_email_worker_t *state) {
             /* packet was a fragment and we need more fragments to complete
              * the application payload.
              */
-             trace_destroy_packet(recvd.data.pkt);
-             continue;
+            EMAIL_DEBUG(state, "Email worker %d: packet is a fragment, saving until we get the remaining fragments", state->emailid);
+            trace_destroy_packet(recvd.data.pkt);
+            continue;
         }
 
         if (cap->content != NULL) {
+            EMAIL_DEBUG(state, "Email worker %d: processing packet received from collector threads", state->emailid);
             find_and_update_active_session(state, cap);
         } else {
+            EMAIL_DEBUG(state, "Email worker %d: packet has no content, ignoring", state->emailid);
             free_captured_email(cap);
         }
 
         trace_destroy_packet(recvd.data.pkt);
     } while (rc > 0);
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: returning from process_received_packet()",
+            state->emailid);
     return 0;
 }
 
@@ -1333,28 +1600,42 @@ static int process_ingested_capture(openli_email_worker_t *state) {
         }
 
         if (x <= 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: no more emails available on ingestion socket",
+                    state->emailid);
             break;
         }
         if (cap == NULL || cap->session_id == NULL) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: NULL cap or cap->session_id received on ingestion socket",
+                    state->emailid);
             free_captured_email(cap);
             break;
         }
+        EMAIL_DEBUG(state,
+                "Email worker %d: processing email message received from ingestion socket",
+                state->emailid);
         find_and_update_active_session(state, cap);
 
     } while (x > 0);
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: returning from process_ingested_capture()",
+            state->emailid);
     return 1;
 }
 
 static void email_worker_main(openli_email_worker_t *state) {
 
     emailsession_t **expired = NULL;
-    int x;
+    int x, nothingfreq;
     int topoll_req;
     sync_epoll_t *ev, *tmp;
 
     logger(LOG_INFO, "OpenLI: starting email processing thread %d",
             state->emailid);
+
+    nothingfreq = 0;
 
     /* TODO add other consumer sockets to topoll */
 
@@ -1362,6 +1643,8 @@ static void email_worker_main(openli_email_worker_t *state) {
         topoll_req = 3 + HASH_CNT(hh, state->timeouts);
 
         if (topoll_req > state->topoll_size) {
+            EMAIL_DEBUG(state, "Email worker %d: increasing size of socket topoll array to %d",
+                    state->emailid, topoll_req);
             if (state->topoll) {
                 free(state->topoll);
             }
@@ -1400,8 +1683,15 @@ static void email_worker_main(openli_email_worker_t *state) {
         }
 
         if (x == 0) {
+            nothingfreq ++;
+            if (nothingfreq * 50 >= 5000) {
+                EMAIL_DEBUG(state, "Email worker %d: no activity on zmq_poll",
+                        state->emailid);
+                nothingfreq = 0;
+            }
             continue;
         }
+        nothingfreq = 0;
 
         if (state->topoll[0].revents & ZMQ_POLLIN) {
             /* message from the sync thread */
@@ -1439,10 +1729,15 @@ static void email_worker_main(openli_email_worker_t *state) {
                 if (sessfound) {
                     HASH_DELETE(hh, state->activesessions, sessfound);
                 }
+                EMAIL_DEBUG(state,
+                        "Email worker %d: removing expired session %s",
+                        state->emailid, expired[x]->key);
                 free_email_session(state, expired[x]);
             }
         }
     }
+    EMAIL_DEBUG(state, "Email worker %d: exiting main loop",
+            state->emailid);
     if (expired) {
         free(expired);
     }
@@ -1452,11 +1747,15 @@ static void free_all_email_sessions(openli_email_worker_t *state) {
 
     emailsession_t *sess, *tmp;
 
+    EMAIL_DEBUG(state, "Email worker %d: removing all active email sessions...",
+            state->emailid);
     HASH_ITER(hh, state->activesessions, sess, tmp) {
         HASH_DELETE(hh, state->activesessions, sess);
         free_email_session(state, sess);
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: all active email sessions removed",
+            state->emailid);
 }
 
 void *start_email_worker_thread(void *arg) {
@@ -1471,6 +1770,9 @@ void *start_email_worker_thread(void *arg) {
     state->alltargets.targets = NULL;
     state->zmq_pubsocks = calloc(state->tracker_threads, sizeof(void *));
     state->zmq_fwdsocks = calloc(state->fwd_threads, sizeof(void *));
+
+    EMAIL_DEBUG(state, "Email worker %d: creating ZMQ sockets...",
+            state->emailid);
 
     init_zmq_socket_array(state->zmq_pubsocks, state->tracker_threads,
             "inproc://openlipub", state->zmq_ctxt);
@@ -1522,9 +1824,13 @@ void *start_email_worker_thread(void *arg) {
          goto haltemailworker;
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: ZMQ sockets created successfully",
+            state->emailid);
     state->fragreass = create_new_ipfrag_reassembler();
     email_worker_main(state);
 
+    EMAIL_DEBUG(state, "Email worker %d: draining remaining email captures...",
+            state->emailid);
     do {
         /* drain remaining email captures and free them */
         x = zmq_recv(state->zmq_colthread_recvsock, &recvd, sizeof(recvd),
@@ -1534,6 +1840,8 @@ void *start_email_worker_thread(void *arg) {
         }
     } while (x > 0);
 
+    EMAIL_DEBUG(state, "Email worker %d: email captures drained",
+            state->emailid);
 haltemailworker:
     logger(LOG_INFO, "OpenLI: halting email processing thread %d",
             state->emailid);
@@ -1543,6 +1851,8 @@ haltemailworker:
     free_all_email_sessions(state);
 
     /* close all ZMQs */
+    EMAIL_DEBUG(state, "Email worker %d: closing ZMQ sockets...",
+            state->emailid);
     zmq_close(state->zmq_ii_sock);
 
     if (state->topoll) {
@@ -1555,16 +1865,24 @@ haltemailworker:
     clear_zmq_socket_array(state->zmq_pubsocks, state->tracker_threads);
     clear_zmq_socket_array(state->zmq_fwdsocks, state->fwd_threads);
 
+    EMAIL_DEBUG(state, "Email worker %d: ZMQ sockets closed",
+            state->emailid);
     /* All timeouts should be freed when we release the active sessions,
      * but just in case there are any left floating around...
      */
+    EMAIL_DEBUG(state, "Email worker %d: freeing outstanding timeouts...",
+            state->emailid);
     HASH_ITER(hh, state->timeouts, syncev, tmp) {
         HASH_DELETE(hh, state->timeouts, syncev);
         free(syncev);
     }
+    EMAIL_DEBUG(state, "Email worker %d: no more outstanding timeouts",
+            state->emailid);
     if (state->fragreass) {
         destroy_ipfrag_reassembler(state->fragreass);
     }
+    EMAIL_DEBUG(state, "Email worker %d: thread exiting",
+            state->emailid);
     pthread_exit(NULL);
 }
 
