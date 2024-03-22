@@ -52,15 +52,6 @@
 #include "timed_intercept.h"
 #include "collector.h"
 
-#define EMAIL_VERBOSE(state, format, ...) \
-    if (state->log_level <= OPENLI_EMAIL_WORKER_LOG_EXTREME) { \
-        logger(LOG_INFO, format, __VA_ARGS__); \
-    }
-
-#define EMAIL_DEBUG(state, format, ...) \
-    if (state->log_level <= OPENLI_EMAIL_WORKER_LOG_DEBUG) { \
-        logger(LOG_INFO, format, __VA_ARGS__); \
-    }
 
 static inline const char *email_type_to_string(openli_email_type_t t) {
     if (t == OPENLI_EMAIL_TYPE_POP3) {
@@ -116,51 +107,82 @@ static struct sockaddr_storage *construct_sockaddr(char *ip, char *port,
     return saddr;
 }
 
-void replace_email_session_serveraddr(emailsession_t *sess,
-        char *server_ip, char *server_port) {
+void replace_email_session_serveraddr(openli_email_worker_t *state,
+        emailsession_t *sess, char *server_ip, char *server_port) {
 
     struct sockaddr_storage *repl = NULL;
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: replacing server address for session %s",
+            state->emailid, sess->key);
     if (strcmp(server_port, "0") == 0) {
+        EMAIL_DEBUG(state, "Email worker %d: server port is zero, bailing",
+            state->emailid);
         return;
     }
 
     if (strcmp(server_ip, "") == 0) {
+        EMAIL_DEBUG(state, "Email worker %d: server IP is empty, bailing",
+            state->emailid);
         return;
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: constructing new server sockaddr",
+            state->emailid);
     repl = construct_sockaddr(server_ip, server_port, &(sess->ai_family));
     if (repl == NULL) {
+        EMAIL_DEBUG(state, "Email worker %d: construction failed, bailing",
+                state->emailid);
         return;
     }
+    EMAIL_DEBUG(state, "Email worker %d: replacing sockaddr",
+            state->emailid);
     if (sess->serveraddr) {
         free(sess->serveraddr);
     }
     sess->serveraddr = repl;
 
+    EMAIL_DEBUG(state, "Email worker %d: replacement complete",
+            state->emailid);
 }
 
-void replace_email_session_clientaddr(emailsession_t *sess,
-        char *client_ip, char *client_port) {
+void replace_email_session_clientaddr(openli_email_worker_t *state,
+        emailsession_t *sess, char *client_ip, char *client_port) {
 
     struct sockaddr_storage *repl = NULL;
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: replacing client address for session %s",
+            state->emailid, sess->key);
     if (strcmp(client_port, "0") == 0) {
+        EMAIL_DEBUG(state, "Email worker %d: client port is zero, bailing",
+            state->emailid);
         return;
     }
 
     if (strcmp(client_ip, "") == 0) {
+        EMAIL_DEBUG(state, "Email worker %d: client IP is empty, bailing",
+            state->emailid);
         return;
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: constructing new client sockaddr",
+            state->emailid);
     repl = construct_sockaddr(client_ip, client_port, &(sess->ai_family));
     if (repl == NULL) {
+        EMAIL_DEBUG(state, "Email worker %d: construction failed, bailing",
+                state->emailid);
         return;
     }
+
+    EMAIL_DEBUG(state, "Email worker %d: replacing sockaddr",
+            state->emailid);
     if (sess->clientaddr) {
         free(sess->clientaddr);
     }
     sess->clientaddr = repl;
+    EMAIL_DEBUG(state, "Email worker %d: replacement complete",
+            state->emailid);
 }
 
 struct fraginfo {
@@ -183,11 +205,16 @@ static int handle_fragments(openli_email_worker_t *state,
     int r;
     uint32_t rem;
 
+    EMAIL_DEBUG(state, "Email worker %d: handling a fragment", state->emailid);
+
     ipstream = get_ipfrag_reassemble_stream(state->fragreass, pkt);
     if (!ipstream) {
         logger(LOG_INFO, "OpenLI: error trying to reassemble IP fragment inside email worker thread");
         return -1;
     }
+
+    EMAIL_DEBUG(state, "Email worker %d: got an ipstream for this fragment",
+            state->emailid);
 
     r = update_ipfrag_reassemble_stream(ipstream, pkt, fraginfo->fragoff,
             fraginfo->moreflag);
@@ -196,6 +223,8 @@ static int handle_fragments(openli_email_worker_t *state,
         return -1;
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: pushed fragment to ipstream instance",
+            state->emailid);
     fraginfo->src_port = fraginfo->dest_port = 0;
 
     if ((r = get_next_ip_reassembled(ipstream, &(fraginfo->fragbuffer),
@@ -203,6 +232,8 @@ static int handle_fragments(openli_email_worker_t *state,
         return r;
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: fragmented packet has been assembled",
+            state->emailid);
     /* packet must be reassembled at this point */
     assert(fraginfo->fragbuffer);
     tcp = (libtrace_tcp_t *)(fraginfo->fragbuffer);
@@ -215,8 +246,13 @@ static int handle_fragments(openli_email_worker_t *state,
     fraginfo->dest_port = ntohs(tcp->dest);
     fraginfo->posttcp = (char *)trace_get_payload_from_tcp(tcp, &rem);
     fraginfo->plen = rem;
+    EMAIL_DEBUG(state, "Email worker %d: fraginfo has been set",
+            state->emailid);
 
     remove_ipfrag_reassemble_stream(state->fragreass, ipstream);
+    EMAIL_DEBUG(state,
+            "Email worker %d: removed assembled packet from ipstream",
+            state->emailid);
     return 1;
 }
 
@@ -241,13 +277,28 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
 
     uint16_t src_port, dest_port, rem_port, host_port;
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: converting libtrace packet to capture record",
+            state->emailid);
     /* account for possible fragmentation */
     memset(&fraginfo, 0, sizeof(struct fraginfo));
 
     fragoff = trace_get_fragment_offset(pkt, &moreflag);
     if (moreflag || fragoff > 0) {
         int r;
+        EMAIL_DEBUG(state,
+                "Email worker %d: packet is a fragment",
+                state->emailid);
         if ((r = handle_fragments(state, pkt, &fraginfo)) <= 0) {
+            if (r < 0) {
+                EMAIL_DEBUG(state,
+                        "Email worker %d: error processing fragment, discarding packet",
+                        state->emailid);
+            } else {
+                EMAIL_DEBUG(state,
+                        "Email worker %d: need more fragments to complete packet",
+                        state->emailid);
+            }
             if (fraginfo.fragbuffer) {
                 free(fraginfo.fragbuffer);
             }
@@ -259,6 +310,9 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
         dest_port = fraginfo.dest_port;
 
     } else {
+        EMAIL_DEBUG(state,
+                "Email worker %d: packet is not a fragment",
+                state->emailid);
         src_port = trace_get_source_port(pkt);
         dest_port = trace_get_destination_port(pkt);
         tcp = (libtrace_tcp_t *)(trace_get_transport(pkt, &proto, &rem));
@@ -273,6 +327,9 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
         }
     }
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: ready to convert complete packet",
+            state->emailid);
     if (src_port == 0 || dest_port == 0) {
         logger(LOG_INFO, "OpenLI: unable to derive port numbers for packet seen in email worker thread");
         goto errstate;
@@ -284,6 +341,9 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
      */
 
     if (src_port < dest_port) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: src_port < dest_port",
+                state->emailid);
         if (trace_get_source_address_string(pkt, ip_a, INET6_ADDRSTRLEN)
                 == NULL) {
             goto errstate;
@@ -297,6 +357,9 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
         host_port = src_port;
         pktsender = OPENLI_EMAIL_PACKET_SENDER_SERVER;
     } else {
+        EMAIL_DEBUG(state,
+                "Email worker %d: src_port >= dest_port",
+                state->emailid);
         if (trace_get_source_address_string(pkt, ip_b, INET6_ADDRSTRLEN)
                 == NULL) {
             goto errstate;
@@ -312,6 +375,8 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
 
     snprintf(space, spacelen, "%s-%s-%u-%u", ip_a, ip_b, host_port,
             rem_port);
+    EMAIL_DEBUG(state, "Email worker %d: session ID is %s",
+            state->emailid, space);
 
     (*cap) = calloc(1, sizeof(openli_email_captured_t));
     if (emailtype == OPENLI_UPDATE_SMTP) {
@@ -342,8 +407,14 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
     (*cap)->mail_id = 0;
     (*cap)->msg_length = plen;
 
+    EMAIL_DEBUG(state, "Email worker %d: basic capture record init complete",
+            state->emailid);
+
     if (fraginfo.fragbuffer) {
         (*cap)->own_content = 1;
+        EMAIL_DEBUG(state,
+                "Email worker %d: copying content from fragbuffer (%u)",
+                state->emailid, (*cap)->msg_length);
         if (posttcp && (*cap)->msg_length > 0) {
             (*cap)->content = calloc((*cap)->msg_length, sizeof(char));
             memcpy((*cap)->content, posttcp, (*cap)->msg_length);
@@ -352,6 +423,9 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
         }
         free(fraginfo.fragbuffer);
     } else {
+        EMAIL_DEBUG(state,
+                "Email worker %d: zero-copy content pointer (%u)",
+                state->emailid, (*cap)->msg_length);
         (*cap)->own_content = 0;
         if ((*cap)->msg_length > 0 && posttcp != NULL) {
             (*cap)->content = (char *)posttcp;
@@ -359,9 +433,13 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
             (*cap)->content = NULL;
         }
     }
+    EMAIL_DEBUG(state, "Email worker %d: packet conversion successful",
+            state->emailid);
     return 1;
 
 errstate:
+    EMAIL_DEBUG(state, "Email worker %d: packet conversion failed",
+            state->emailid);
     if (fraginfo.fragbuffer) {
         free(fraginfo.fragbuffer);
     }
@@ -372,6 +450,9 @@ static void init_email_session(emailsession_t *sess,
         openli_email_captured_t *cap, char *sesskey,
         openli_email_worker_t *state) {
 
+    EMAIL_DEBUG(state, "Email worker %d: initialising email session for key %s",
+            state->emailid, sesskey);
+
     sess->key = strdup(sesskey);
     sess->cin = hashlittle(cap->session_id, strlen(cap->session_id),
             1872422);
@@ -380,13 +461,23 @@ static void init_email_session(emailsession_t *sess,
     if (cap->type == OPENLI_EMAIL_TYPE_SMTP ||
             cap->type == OPENLI_EMAIL_TYPE_IMAP ||
             cap->type == OPENLI_EMAIL_TYPE_POP3) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: setting server and client addresses",
+                state->emailid);
         sess->serveraddr = construct_sockaddr(cap->host_ip, cap->host_port,
                 &sess->ai_family);
         sess->clientaddr = construct_sockaddr(cap->remote_ip, cap->remote_port,
                 NULL);
     } else {
         /* TODO */
+        EMAIL_DEBUG(state,
+                "Email worker %d: unexpected protocol type %u",
+                state->emailid, cap->type);
     }
+
+    EMAIL_DEBUG(state,
+            "Email worker %d: setting ingest target ID (if required)",
+            state->emailid);
 
     pthread_rwlock_rdlock(state->glob_config_mutex);
     if (cap->target_id && (*state->email_ingest_use_targetid)) {
@@ -398,6 +489,9 @@ static void init_email_session(emailsession_t *sess,
 
     sess->ingest_direction = cap->direction;
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: checking if we need to mask credentials",
+            state->emailid);
     if (cap->type == OPENLI_EMAIL_TYPE_IMAP) {
         pthread_rwlock_rdlock(state->glob_config_mutex);
         sess->mask_credentials = *(state->mask_imap_creds);
@@ -410,6 +504,8 @@ static void init_email_session(emailsession_t *sess,
         sess->mask_credentials = 0;
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: initializing remaining parameters",
+            state->emailid);
     memset(&(sess->sender), 0, sizeof(email_participant_t));
     sess->participants = NULL;
     sess->protocol = cap->type;
@@ -426,6 +522,9 @@ static void init_email_session(emailsession_t *sess,
     sess->ccs_sent = NULL;
     sess->iris_sent = NULL;
     sess->iricount = 0;
+
+    EMAIL_DEBUG(state, "Email worker %d: session initialization complete",
+            state->emailid);
 }
 
 int extract_email_sender_from_body(openli_email_worker_t *state,
@@ -1523,7 +1622,7 @@ static int find_and_update_active_session(openli_email_worker_t *state,
         }
         EMAIL_DEBUG(state,
                 "Email worker %d: update for %s session '%s' was successful",
-                    state->emailid, sess->key);
+                    state->emailid, email_type_to_string(cap->type), sess->key);
         free_captured_email(cap);
         sess->held_captured[sess->next_expected_captured] = NULL;
         sess->next_expected_captured ++;

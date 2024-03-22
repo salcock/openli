@@ -407,8 +407,8 @@ static int find_multi_end(pop3_session_t *pop3sess, int start_index) {
     return 0;
 }
 
-static int parse_xclient_content(emailsession_t *sess,
-        pop3_session_t *pop3sess) {
+static int parse_xclient_content(openli_email_worker_t *state,
+        emailsession_t *sess, pop3_session_t *pop3sess) {
 
 
     char *xcontent = (char *)pop3sess->contbuffer + pop3sess->command_start;
@@ -471,7 +471,7 @@ static int parse_xclient_content(emailsession_t *sess,
             }
             pop3sess->client_port = strdup(value);
         }
-        replace_email_session_clientaddr(sess, pop3sess->client_ip,
+        replace_email_session_clientaddr(state, sess, pop3sess->client_ip,
                 pop3sess->client_port);
     }
 
@@ -729,7 +729,7 @@ static int handle_client_command(openli_email_worker_t *state,
         sess->currstate = OPENLI_POP3_STATE_XCLIENT_SEEN;
         pop3sess->seen_xclient = 1;
 
-        if (parse_xclient_content(sess, pop3sess) < 0) {
+        if (parse_xclient_content(state, sess, pop3sess) < 0) {
             return -1;
         }
     } else if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_AUTH) {

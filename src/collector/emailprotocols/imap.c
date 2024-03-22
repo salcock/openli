@@ -1121,7 +1121,8 @@ static int append_content_to_imap_buffer(imap_session_t *imapsess,
         }
 
 
-static int parse_id_command(emailsession_t *sess, imap_session_t *imapsess) {
+static int parse_id_command(openli_email_worker_t *state,
+        emailsession_t *sess, imap_session_t *imapsess) {
     char *ptr;
     char *comm_str = (char *)(imapsess->contbuffer + imapsess->next_comm_start);
 
@@ -1198,11 +1199,11 @@ static int parse_id_command(emailsession_t *sess, imap_session_t *imapsess) {
     }
 
     if (server_ip && server_port) {
-        replace_email_session_serveraddr(sess, server_ip, server_port);
+        replace_email_session_serveraddr(state, sess, server_ip, server_port);
     }
 
     if (client_ip && client_port) {
-        replace_email_session_clientaddr(sess, client_ip, client_port);
+        replace_email_session_clientaddr(state, sess, client_ip, client_port);
     }
 
     if (server_ip) { free(server_ip); }
@@ -1375,7 +1376,7 @@ static int find_command_end(openli_email_worker_t *state,
      * command content */
 
     if (imapsess->next_command_type == OPENLI_IMAP_COMMAND_ID) {
-        parse_id_command(sess, imapsess);
+        parse_id_command(state, sess, imapsess);
     }
 
     if (imapsess->next_command_type == OPENLI_IMAP_COMMAND_LOGOUT) {

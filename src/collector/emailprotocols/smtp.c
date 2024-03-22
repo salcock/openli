@@ -1256,6 +1256,10 @@ static int extract_sender_from_auth_creds(openli_email_worker_t *state,
         return 0;
     }
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: parsing authentication credentials (method=%d)",
+            state->emailid, smtpsess->auth_method);
+
     if (smtpsess->auth_method == SMTP_AUTH_METHOD_LOGIN ||
             smtpsess->auth_method == SMTP_AUTH_METHOD_PLAIN ||
             smtpsess->auth_method == SMTP_AUTH_METHOD_CRAMMD5) {
@@ -1268,55 +1272,90 @@ static int extract_sender_from_auth_creds(openli_email_worker_t *state,
         }
         decoded[cnt] = '\0';
         ptr = decoded;
+        EMAIL_DEBUG(state,
+                "Email worker %d: base64 decoded successfully",
+                state->emailid);
     }
 
     if (smtpsess->auth_method == SMTP_AUTH_METHOD_LOGIN) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: parsing LOGIN authentication",
+                state->emailid);
         /* should just be a username */
         if (strchr(ptr, '@') == NULL) {
             /* no domain in the username, add our default one */
+            EMAIL_DEBUG(state,
+                    "Email worker %d: no domain present",
+                    state->emailid);
             newlen = strlen(ptr) + strlen(defaultdomain) + 2;
             sender = calloc(newlen, sizeof(char));
             snprintf(sender, newlen, "%s@%s", ptr, defaultdomain);
         } else {
             sender = strdup(ptr);
         }
+        EMAIL_DEBUG(state, "Email worker %d: LOGIN, sender is %s",
+                state->emailid, sender);
     } else if (smtpsess->auth_method == SMTP_AUTH_METHOD_PLAIN) {
         /* format is [authzid] \0 authcid \0 password
          *
          * we want authcid, but also need to be careful about the
          * case where authzid is not present.
          */
+        EMAIL_DEBUG(state,
+                "Email worker %d: parsing PLAIN authentication",
+                state->emailid);
         ptr += strlen(ptr) + 1;
         if (strchr(ptr, '@') == NULL) {
             /* no domain in the authcid, add our default one */
+            EMAIL_DEBUG(state,
+                    "Email worker %d: no domain present",
+                    state->emailid);
             newlen = strlen(ptr) + strlen(defaultdomain) + 2;
             sender = calloc(newlen, sizeof(char));
             snprintf(sender, newlen, "%s@%s", ptr, defaultdomain);
         } else {
             sender = strdup(ptr);
         }
+        EMAIL_DEBUG(state, "Email worker %d: PLAIN, sender is %s",
+                state->emailid, sender);
     } else if (smtpsess->auth_method == SMTP_AUTH_METHOD_CRAMMD5) {
         /* format is username <space> digest */
+        EMAIL_DEBUG(state,
+                "Email worker %d: parsing CRAMMD5 authentication",
+                state->emailid);
         char *token = strtok(ptr, " \t\r\n");
         if (token == NULL) {
             return -1;
         }
         if (strchr(token, '@') == NULL) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: no domain present",
+                    state->emailid);
             newlen = strlen(token) + strlen(defaultdomain) + 2;
             sender = calloc(newlen, sizeof(char));
             snprintf(sender, newlen, "%s@%s", token, defaultdomain);
         } else {
             sender = strdup(token);
         }
+        EMAIL_DEBUG(state, "Email worker %d: CRAMMD5, sender is %s",
+                state->emailid, sender);
     }
 
     if (sender) {
         *sendername = sender;
         if (authed) {
+            EMAIL_DEBUG(state, "Email worker %d: adding sender as participant",
+                    state->emailid);
             add_email_participant(state, sess, sender, 1);
         }
+        EMAIL_DEBUG(state,
+                "Email worker %d: authentication credentials parsed successfully",
+                state->emailid);
         return 1;
     } else {
+        EMAIL_DEBUG(state,
+                "Email worker %d: unsupported authentication method",
+                state->emailid);
         return 0;
     }
 
@@ -1337,6 +1376,9 @@ static int authenticate_success(openli_email_worker_t *state,
         defaultdomain = "example.org";
     }
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: extracting auth credentials following auth failure -- default domain is %s",
+            state->emailid, defaultdomain);
     r = extract_sender_from_auth_creds(state, sess, smtpsess, defaultdomain,
             &sendername, 1);
     pthread_rwlock_unlock(state->glob_config_mutex);
@@ -1344,6 +1386,9 @@ static int authenticate_success(openli_email_worker_t *state,
     if (r <= 0) {
         return r;
     }
+
+    EMAIL_DEBUG(state,
+            "Email worker %d: activating new sender", state->emailid);
 
     activate_latest_sender(state, sess, smtpsess, timestamp, &sender);
     smtpsess->activesender = sender;
@@ -1355,16 +1400,25 @@ static int authenticate_success(openli_email_worker_t *state,
     /* Note: 0 is the value defined in the ETSI spec for "validated", so
      * this is CORRECT
      */
+    EMAIL_DEBUG(state,
+            "Email worker %d: generating login success IRI for %s",
+            state->emailid, sendername);
     sess->sender_validated_etsivalue = 0;
     generate_email_login_success_iri(state, sess, sess->sender.emailaddr);
     sess->login_sent = 1;
     sender->active = 1;
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: copying %d preambles into sender->ccs",
+            state->emailid, smtpsess->preambles.curr_command);
     for (i = 0; i < smtpsess->preambles.curr_command; i++) {
         copy_smtp_command(&(sender->ccs),
                 &(smtpsess->preambles.commands[i]));
     }
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: sending CCs following authentication success",
+            state->emailid);
     /* Send the CCs */
     generate_smtp_ccs_from_saved(state, sess, smtpsess,
                     &(sender->ccs), sess->sender.emailaddr, 1);
@@ -1378,19 +1432,31 @@ static int authenticate_failure(openli_email_worker_t *state,
     int r, i;
     const char *defaultdomain = NULL;
 
+    pthread_rwlock_rdlock(state->glob_config_mutex);
     if (state->defaultdomain) {
         defaultdomain = (const char *)(*(state->defaultdomain));
     } else {
         defaultdomain = "example.org";
     }
+    EMAIL_DEBUG(state,
+            "Email worker %d: extracting auth credentials following auth failure -- default domain is %s",
+            state->emailid, defaultdomain);
+
     r = extract_sender_from_auth_creds(state, sess, smtpsess, defaultdomain,
             &sendername, 0);
+    pthread_rwlock_unlock(state->glob_config_mutex);
     if (r <= 0) {
         return r;
     }
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: generating login failure IRI for %s",
+            state->emailid, sendername);
     generate_email_login_failure_iri(state, sess, sendername);
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: sending CCs for authentication failure event",
+            state->emailid);
     /* Send the CCs */
     generate_smtp_ccs_from_saved(state, sess, smtpsess,
                     &(smtpsess->preambles), sendername, 1);
@@ -1409,54 +1475,109 @@ static int process_next_smtp_state(openli_email_worker_t *state,
      * much, but something to bear in mind...
      */
 
+    EMAIL_DEBUG(state, "Email worker %d: entering process_next_smtp_state",
+            state->emailid);
 
     if (sess->currstate != OPENLI_SMTP_STATE_DATA_CONTENT) {
+        EMAIL_DEBUG(state, "Email worker %d: checking for QUIT",
+                state->emailid);
         if ((r = find_quit_command(smtpsess)) == 1) {
             sess->currstate = OPENLI_SMTP_STATE_QUIT;
             sess->client_octets += 6;
             smtpsess->reply_start = smtpsess->contbufread;
+            EMAIL_DEBUG(state, "Email worker %d: setting session state to QUIT",
+                    state->emailid);
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: no QUIT command was found",
+                    state->emailid);
         }
     }
 
     if (sess->currstate != OPENLI_SMTP_STATE_DATA_CONTENT) {
+        EMAIL_DEBUG(state, "Email worker %d: checking for RSET",
+                state->emailid);
         if ((r = find_reset_command(smtpsess)) == 1) {
             smtpsess->saved_state = sess->currstate;
             sess->currstate = OPENLI_SMTP_STATE_RESET;
             sess->client_octets += 6;
             smtpsess->reply_start = smtpsess->contbufread;
+            EMAIL_DEBUG(state, "Email worker %d: setting session state to RSET",
+                    state->emailid);
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: no RSET command was found",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_INIT ||
             sess->currstate == OPENLI_SMTP_STATE_EHLO_OVER) {
+        EMAIL_DEBUG(state, "Email worker %d: checking for EHLO",
+                state->emailid);
         if ((r = find_ehlo_start(sess, smtpsess)) == 1) {
+            EMAIL_DEBUG(state, "Email worker %d: setting session state to EHLO",
+                    state->emailid);
             sess->currstate = OPENLI_SMTP_STATE_EHLO;
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: no EHLO command was found",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_EHLO) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: looking for the end of the EHLO command",
+                state->emailid);
         if ((r = find_ehlo_end(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: found the end of the EHLO command",
+                    state->emailid);
             sess->currstate = OPENLI_SMTP_STATE_EHLO_RESPONSE;
             sess->client_octets +=
                     (smtpsess->contbufread - smtpsess->command_start);
             smtpsess->reply_start = smtpsess->contbufread;
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: still waiting for the end of the EHLO command",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_EHLO_RESPONSE) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: looking for the reply to an EHLO",
+                state->emailid);
+
         if ((r = find_ehlo_response_end(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: found a complete reply -- %u",
+                    state->emailid, smtpsess->reply_code);
             sess->currstate = OPENLI_SMTP_STATE_EHLO_OVER;
             sess->server_octets +=
                     (smtpsess->contbufread - smtpsess->reply_start);
@@ -1464,15 +1585,30 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             add_new_smtp_reply(&(smtpsess->preambles), smtpsess->reply_start,
                     smtpsess->contbufread, smtpsess->reply_code, timestamp);
             smtpsess->last_ehlo_reply_code = smtpsess->reply_code;
+            EMAIL_DEBUG(state,
+                    "Email worker %d: moving into EHLO OVER state",
+                    state->emailid);
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: no complete reply to EHLO found",
+                    state->emailid);
         }
-
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_EHLO_OVER) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: looking for next command in EHLO OVER state",
+                state->emailid);
         if ((r = find_mail_from(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: found a MAIL FROM command",
+                    state->emailid);
             sess->currstate = OPENLI_SMTP_STATE_MAIL_FROM;
             smtpsess->last_mail_from.command_type = SMTP_COMMAND_TYPE_MAIL_FROM;
             smtpsess->last_mail_from.command_start = smtpsess->contbufread;
@@ -1481,52 +1617,106 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             smtpsess->next_command_index ++;
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
         }
         if ((r = find_auth(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: found a AUTH command",
+                    state->emailid);
             sess->currstate = OPENLI_SMTP_STATE_AUTH;
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
         }
         if ((r = find_starttls(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: found a STARTTLS command",
+                    state->emailid);
             sess->currstate = OPENLI_SMTP_STATE_STARTTLS;
             sess->client_octets += 10;
             smtpsess->reply_start = smtpsess->contbufread;
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
         }
         if ((r = find_other_command(smtpsess, sess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: found an unexpected command",
+                    state->emailid);
             smtpsess->saved_state = sess->currstate;
             sess->currstate = OPENLI_SMTP_STATE_OTHER_COMMAND;
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: no useful command has been found",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_AUTH) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for end of an AUTH command",
+                state->emailid);
         if ((r = find_auth_end(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: end of AUTH command found",
+                    state->emailid);
             sess->currstate = OPENLI_SMTP_STATE_AUTH_REPLY;
             smtpsess->reply_start = smtpsess->contbufread;
             sess->client_octets +=
                     (smtpsess->contbufread - smtpsess->command_start);
             if (process_auth_message(smtpsess) < 0) {
+                EMAIL_DEBUG(state,
+                        "Email worker %d: error in process_auth_message while in process_next_smtp_state",
+                        state->emailid);
                 return -1;
             }
+            EMAIL_DEBUG(state,
+                    "Email worker %d: AUTH command processed successfully",
+                    state->emailid);
             add_new_smtp_command(&(smtpsess->preambles),
                     smtpsess->command_start,SMTP_COMMAND_TYPE_AUTH,
                     smtpsess->next_command_index);
             smtpsess->next_command_index ++;
+            EMAIL_DEBUG(state,
+                    "Email worker %d: moving into AUTH REPLY state",
+                    state->emailid);
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: AUTH command is not yet complete",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_AUTH_REPLY) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for reply to an AUTH command",
+                state->emailid);
         if ((r = find_auth_reply_code(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: reply code found -- %u",
+                    state->emailid, smtpsess->reply_code);
+
             add_new_smtp_reply(&(smtpsess->preambles), smtpsess->reply_start,
                     smtpsess->contbufread, smtpsess->reply_code, timestamp);
             if (smtpsess->reply_code == 334) {
@@ -1534,135 +1724,287 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             } else if (smtpsess->reply_code == 235) {
                 if (authenticate_success(state, sess, smtpsess,
                             timestamp) < 0) {
+                    EMAIL_DEBUG(state,
+                            "Email worker %d: error in authenticate_success while in process_next_smtp_state",
+                            state->emailid);
                     return -1;
                 }
+                EMAIL_DEBUG(state,
+                        "Email worker %d: authentication successful",
+                        state->emailid);
                 sess->currstate = OPENLI_SMTP_STATE_EHLO_OVER;
             } else if (smtpsess->reply_code == 535) {
                 if (authenticate_failure(state, sess, smtpsess, timestamp) < 0)
                 {
+                    EMAIL_DEBUG(state,
+                            "Email worker %d: error in authenticate_failure while in process_next_smtp_state",
+                            state->emailid);
                     return -1;
                 }
+                EMAIL_DEBUG(state,
+                        "Email worker %d: authentication failed",
+                        state->emailid);
                 sess->currstate = OPENLI_SMTP_STATE_EHLO_OVER;
             }
             sess->server_octets += (smtpsess->contbufread -
                     smtpsess->reply_start);
             smtpsess->command_start = smtpsess->contbufread;
+            EMAIL_DEBUG(state,
+                    "Email worker %d: authentication reply processed successfully",
+                    state->emailid);
             return 1;
 
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: unable to find reply code for AUTH",
+                    state->emailid);
         }
 
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_AUTH_CREDS) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: looking for end of AUTH credentials",
+                state->emailid);
         if ((r = find_auth_creds_end(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: end of AUTH credentials has been found",
+                    state->emailid);
             sess->currstate = OPENLI_SMTP_STATE_AUTH_REPLY;
             smtpsess->reply_start = smtpsess->contbufread;
             sess->client_octets +=
                     (smtpsess->contbufread - smtpsess->command_start);
             if (process_auth_credentials(smtpsess) < 0) {
+                EMAIL_DEBUG(state,
+                        "Email worker %d: error while processing AUTH credentials in process_next_smtp_state",
+                        state->emailid);
                 return -1;
             }
+            EMAIL_DEBUG(state,
+                    "Email worker %d: processed AUTH credentials successfully",
+                    state->emailid);
             add_new_smtp_command(&(smtpsess->preambles),
                     smtpsess->command_start, SMTP_COMMAND_TYPE_AUTH,
                     smtpsess->next_command_index);
+            EMAIL_DEBUG(state,
+                    "Email worker %d: AUTH command processing completed",
+                    state->emailid);
             smtpsess->next_command_index ++;
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: end of AUTH credentials not found",
+                    state->emailid);
         }
     }
 
 
     if (sess->currstate == OPENLI_SMTP_STATE_MAIL_FROM) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for end of a MAIL FROM command",
+                state->emailid);
         if ((r = find_mail_from_end(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: end of MAIL FROM command found",
+                    state->emailid);
             sess->currstate = OPENLI_SMTP_STATE_MAIL_FROM_REPLY;
             smtpsess->last_mail_from.reply_start = smtpsess->contbufread;
             sess->client_octets +=
                     (smtpsess->contbufread - smtpsess->command_start);
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: end of MAIL FROM command was not found",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_MAIL_FROM_REPLY) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for reply to a MAIL FROM command",
+                state->emailid);
         if ((r = find_mail_from_reply_end(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: found a MAIL FROM reply code -- %u",
+                    state->emailid, smtpsess->reply_code);
             return mail_from_reply(state, sess, smtpsess, timestamp);
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: no reply code found for MAIL FROM",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_MAIL_FROM_OVER) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for a command following a completed MAIL FROM",
+                state->emailid);
         if ((r = find_rcpt_to(smtpsess)) == 1) {
             sess->currstate = OPENLI_SMTP_STATE_RCPT_TO;
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
         }
         if ((r = find_other_command(smtpsess, sess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: found an unexpected command",
+                    state->emailid);
             smtpsess->saved_state = sess->currstate;
             sess->currstate = OPENLI_SMTP_STATE_OTHER_COMMAND;
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: no post-MAIL FROM command found",
+                    state->emailid);
         }
+
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_OTHER_COMMAND) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for end of 'other' command",
+                state->emailid);
         if ((r = find_other_command_end(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: end of other command found",
+                    state->emailid);
             sess->currstate = OPENLI_SMTP_STATE_OTHER_COMMAND_REPLY;
             smtpsess->reply_start = smtpsess->contbufread;
             sess->client_octets +=
                     (smtpsess->contbufread - smtpsess->command_start);
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: end of other command NOT found",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_OTHER_COMMAND_REPLY) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for end of reply to 'other' command",
+                state->emailid);
         if ((r = find_other_command_reply_end(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: end of reply to other command found",
+                    state->emailid);
             return other_command_reply(state, sess, smtpsess, timestamp);
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: end of reply to other command NOT found",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_RCPT_TO) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for end of RCPT TO command",
+                state->emailid);
         if ((r = find_rcpt_to_end(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: end of RCPT TO command found",
+                    state->emailid);
             sess->currstate = OPENLI_SMTP_STATE_RCPT_TO_REPLY;
             smtpsess->reply_start = smtpsess->contbufread;
             sess->client_octets +=
                     (smtpsess->contbufread - smtpsess->command_start);
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: end of RCPT TO command NOT found",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_RCPT_TO_REPLY) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for end of RCPT TO reply",
+                state->emailid);
         if ((r = find_rcpt_to_reply_end(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: end of RCPT TO reply found: %u",
+                    state->emailid, smtpsess->reply_code);
+
             return rcpt_to_reply(state, sess, smtpsess, timestamp);
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: end of RCPT TO reply NOT found",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_RCPT_TO_OVER) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for command after RCPT TO completed",
+                state->emailid);
         if ((r = find_rcpt_to(smtpsess)) == 1) {
-            sess->currstate = OPENLI_SMTP_STATE_RCPT_TO;
+            EMAIL_DEBUG(state,
+                    "Email worker %d: found another RCPT TO",
+                    state->emailid);
+                sess->currstate = OPENLI_SMTP_STATE_RCPT_TO;
             /* Need to restart the loop to handle RCPT_TO state again */
             return 1;
         } else if ((r = find_data_start(smtpsess)) == 1) {
 
+            EMAIL_DEBUG(state,
+                    "Email worker %d: found a DATA command",
+                    state->emailid);
             sess->currstate = OPENLI_SMTP_STATE_DATA_INIT_REPLY;
             sess->client_octets += 6;
             smtpsess->reply_start = smtpsess->contbufread;
             return 1;
         } else if ((r = find_mail_from(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: found a MAIL FROM",
+                    state->emailid);
             sess->currstate = OPENLI_SMTP_STATE_MAIL_FROM;
             smtpsess->last_mail_from.command_type = SMTP_COMMAND_TYPE_MAIL_FROM;
             smtpsess->last_mail_from.command_start = smtpsess->contbufread;
@@ -1671,16 +2013,32 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             smtpsess->next_command_index ++;
             return 1;
         } else if ((r = find_other_command(smtpsess, sess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: found an unexpected command",
+                    state->emailid);
             smtpsess->saved_state = sess->currstate;
             sess->currstate = OPENLI_SMTP_STATE_OTHER_COMMAND;
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: did not find anything useful",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_DATA_INIT_REPLY) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for initial reply to DATA",
+                state->emailid);
         if ((r = find_data_init_reply_code(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: found reply code %u",
+                    state->emailid, smtpsess->reply_code);
             if (smtpsess->reply_code == 354) {
                 sess->currstate = OPENLI_SMTP_STATE_DATA_CONTENT;
             } else {
@@ -1689,37 +2047,80 @@ static int process_next_smtp_state(openli_email_worker_t *state,
 
             save_latest_command(state, sess, smtpsess, timestamp,
                     SMTP_COMMAND_TYPE_DATA, 0, 0);
+            EMAIL_DEBUG(state,
+                    "Email worker %d: saved DATA command successfully",
+                    state->emailid);
             smtpsess->command_start = smtpsess->contbufread;
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: initial reply to DATA is not present",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_DATA_CONTENT) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for end of DATA content",
+                state->emailid);
         if ((r = find_data_content_ending(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: reached end of content",
+                    state->emailid, smtpsess->reply_code);
             sess->currstate = OPENLI_SMTP_STATE_DATA_FINAL_REPLY;
             smtpsess->reply_start = smtpsess->contbufread;
             sess->client_octets +=
                     (smtpsess->contbufread - smtpsess->command_start);
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: still more DATA content to come",
+                    state->emailid, smtpsess->reply_code);
         }
+
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_DATA_FINAL_REPLY) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for final reply code in DATA state",
+                state->emailid);
         if ((r = find_data_final_reply_code(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: found reply code %u",
+                    state->emailid, smtpsess->reply_code);
             data_content_over(state, sess, smtpsess, timestamp);
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: No reply code found",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_DATA_OVER) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for follow up command in DATA OVER state",
+                state->emailid);
         if ((r = find_mail_from(smtpsess)) == 1) {
             /* client is re-using the session to send another email? */
+            EMAIL_DEBUG(state,
+                    "Email worker %d: MAIL FROM found",
+                    state->emailid);
             sess->currstate = OPENLI_SMTP_STATE_MAIL_FROM;
             smtpsess->last_mail_from.command_type = SMTP_COMMAND_TYPE_MAIL_FROM;
             smtpsess->last_mail_from.command_start = smtpsess->contbufread;
@@ -1728,14 +2129,28 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             smtpsess->next_command_index ++;
             return 1;
         } else if ((r = find_other_command(smtpsess, sess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: Unexpected command found, moving to OTHER COMMAND state",
+                    state->emailid);
             smtpsess->saved_state = sess->currstate;
             sess->currstate = OPENLI_SMTP_STATE_OTHER_COMMAND;
             return 1;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: No follow up command found",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_STARTTLS) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for STARTTLS reply code",
+                state->emailid);
         if ((r = find_starttls_reply_end(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: found reply code %u",
+                    state->emailid, smtpsess->reply_code);
+
             sess->server_octets +=
                     (smtpsess->contbufread - smtpsess->reply_start);
             if (smtpsess->reply_code == 220) {
@@ -1749,56 +2164,126 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             /* May as well include the STARTTLS attempt in the preamble
              * CCs
              */
+            EMAIL_DEBUG(state,
+                    "Email worker %d: STARTTLS failed, session is not encrypted",
+                    state->emailid);
             add_new_smtp_command(&(smtpsess->preambles),
                     smtpsess->command_start, SMTP_COMMAND_TYPE_STARTTLS,
                     smtpsess->next_command_index);
+            EMAIL_DEBUG(state,
+                    "Email worker %d: STARTTLS add_new_smtp_command complete",
+                    state->emailid);
             add_new_smtp_reply(&(smtpsess->preambles),
                     smtpsess->reply_start, smtpsess->contbufread,
                     smtpsess->reply_code, timestamp);
+            EMAIL_DEBUG(state,
+                    "Email worker %d: STARTTLS add_new_smtp_reply complete",
+                    state->emailid);
             smtpsess->next_command_index ++;
             sess->currstate = OPENLI_SMTP_STATE_EHLO_OVER;
+            EMAIL_DEBUG(state,
+                    "Email worker %d: STARTTLS complete, moving to EHLO OVER state",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_RESET) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for RSET reply code",
+                state->emailid);
         if ((r = find_reset_reply_code(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: RSET reply code detected -- %u",
+                    state->emailid, smtpsess->reply_code);
             if (smtpsess->saved_state == OPENLI_SMTP_STATE_INIT ||
                     smtpsess->saved_state == OPENLI_SMTP_STATE_EHLO_OVER ||
                     smtpsess->saved_state == OPENLI_SMTP_STATE_DATA_OVER) {
+                EMAIL_DEBUG(state,
+                        "Email worker %d: saved state is %u, reset to INIT",
+                        state->emailid, smtpsess->saved_state);
                 sess->currstate = smtpsess->saved_state;
                 smtpsess->saved_state = OPENLI_SMTP_STATE_INIT;
             } else {
+                EMAIL_DEBUG(state,
+                        "Email worker %d: saved state is %u, reset to EHLO OVER",
+                        state->emailid, smtpsess->saved_state);
                 sess->currstate = OPENLI_SMTP_STATE_EHLO_OVER;
                 smtpsess->saved_state = OPENLI_SMTP_STATE_INIT;
 
             }
             if (sess->currstate != OPENLI_SMTP_STATE_DATA_OVER) {
+                EMAIL_DEBUG(state,
+                        "Email worker %d: clearing participant list",
+                        state->emailid);
                 clear_email_participant_list(state, sess);
                 set_all_smtp_participants_inactive(smtpsess);
+            } else {
+                EMAIL_DEBUG(state,
+                        "Email worker %d: no need to clear participant list",
+                        state->emailid);
             }
+
             save_latest_command(state, sess, smtpsess, timestamp,
                     SMTP_COMMAND_TYPE_RSET, 1, 0);
+            EMAIL_DEBUG(state,
+                    "Email worker %d: finished updating for RSET reply code",
+                    state->emailid);
             return 1;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: RSET reply code not found",
+                    state->emailid);
         }
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_QUIT) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking for QUIT reply code",
+                state->emailid);
         if ((r = find_quit_reply_code(smtpsess)) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: QUIT reply code detected -- %u",
+                    state->emailid, smtpsess->reply_code);
             sess->currstate = OPENLI_SMTP_STATE_QUIT_REPLY;
             sess->event_time = timestamp;
             if (sess->login_sent) {
+                EMAIL_DEBUG(state,
+                        "Email worker %d: generating logoff event",
+                        state->emailid);
                 generate_email_logoff_iri(state, sess);
+            } else {
+                EMAIL_DEBUG(state,
+                        "Email worker %d: NOT generating logoff event",
+                        state->emailid);
             }
+
             save_latest_command(state, sess, smtpsess, timestamp,
                     SMTP_COMMAND_TYPE_QUIT, 1, 0);
+            EMAIL_DEBUG(state,
+                    "Email worker %d: finished updating for QUIT reply code",
+                    state->emailid);
             return 0;
         } else if (r < 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: error while in process_next_smtp_state",
+                    state->emailid);
             return r;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: QUIT reply code not found",
+                    state->emailid);
         }
+
     }
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: reached end of process_next_smtp_state",
+            state->emailid);
     return 0;
 }
 
@@ -1806,6 +2291,9 @@ int update_smtp_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap) {
     smtp_session_t *smtpsess;
     int r;
+
+    EMAIL_DEBUG(state, "Email worker %d: updating SMTP session %s",
+            state->emailid, sess->key);
 
     if (sess->proto_state == NULL) {
         smtpsess = calloc(1, sizeof(smtp_session_t));
@@ -1834,17 +2322,34 @@ int update_smtp_session_by_ingestion(openli_email_worker_t *state,
          * this is CORRECT
          */
         sess->sender_validated_etsivalue = 1;
+        EMAIL_DEBUG(state,
+                "Email worker %d: session is new, initializing SMTP state",
+                state->emailid);
     } else {
         smtpsess = (smtp_session_t *)sess->proto_state;
     }
 
+    if (smtpsess->ignore) {
+        EMAIL_DEBUG(state, "Email worker %d: ignore flag is set for session",
+                state->emailid);
+    }
+
+    if (cap->content == NULL) {
+        EMAIL_DEBUG(state, "Email worker %d: no content in provided message",
+                state->emailid);
+    }
+
     if (cap->content != NULL && smtpsess->ignore == 0) {
 
+        EMAIL_DEBUG(state, "Email worker %d: appending content to SMTP buffer",
+                state->emailid);
         if (append_content_to_smtp_buffer(smtpsess, cap, sess) < 0) {
             logger(LOG_INFO, "OpenLI: Failed to append SMTP message content to session buffer for %s", sess->key);
             return -1;
         }
 
+        EMAIL_DEBUG(state, "Email worker %d: processing buffer contents",
+                state->emailid);
         while (1) {
             if ((r = process_next_smtp_state(state, sess, smtpsess,
                     cap->timestamp)) <= 0) {
@@ -1854,9 +2359,13 @@ int update_smtp_session_by_ingestion(openli_email_worker_t *state,
     }
 
     if (sess->currstate == OPENLI_SMTP_STATE_QUIT_REPLY) {
+        EMAIL_DEBUG(state, "Email worker %d: SMTP session has ended via QUIT",
+                state->emailid);
         return 1;
     }
 
+    EMAIL_DEBUG(state, "Email worker %d: SMTP state update completed",
+            state->emailid);
     return 0;
 }
 

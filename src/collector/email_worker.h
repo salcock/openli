@@ -205,10 +205,10 @@ void clear_email_sender(emailsession_t *sess);
 int extract_email_sender_from_body(openli_email_worker_t *state,
         emailsession_t *sess, char *bodycontent, char **extracted);
 
-void replace_email_session_serveraddr(emailsession_t *sess,
-        char *server_ip, char *server_port);
-void replace_email_session_clientaddr(emailsession_t *sess,
-        char *client_ip, char *client_port);
+void replace_email_session_serveraddr(openli_email_worker_t *state,
+        emailsession_t *sess, char *server_ip, char *server_port);
+void replace_email_session_clientaddr(openli_email_worker_t *state,
+        emailsession_t *sess, char *client_ip, char *client_port);
 
 int get_email_authentication_type(char *authmsg, const char *sesskey,
         openli_email_auth_type_t *at_code, uint8_t is_imap);
@@ -256,5 +256,16 @@ int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
 int generate_email_cc_from_pop3_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
         uint64_t timestamp, uint8_t dir);
+
+#define EMAIL_VERBOSE(state, format, ...) \
+    if (state->log_level <= OPENLI_EMAIL_WORKER_LOG_EXTREME) { \
+        logger(LOG_INFO, format, __VA_ARGS__); \
+    }
+
+#define EMAIL_DEBUG(state, format, ...) \
+    if (state->log_level <= OPENLI_EMAIL_WORKER_LOG_DEBUG) { \
+        logger(LOG_INFO, format, __VA_ARGS__); \
+    }
+
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
