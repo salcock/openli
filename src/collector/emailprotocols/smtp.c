@@ -966,25 +966,57 @@ static int forwarding_header_check(openli_email_worker_t *state,
     string_set_t *s, *tmp;
     char *val;
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: entering forwarding_header_check() for %s",
+            state->emailid, sess->key);
+
     HASH_ITER(hh, *(state->email_forwarding_headers), s, tmp) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: checking if header %s matches the configured header %s",
+                state->emailid, header, s->term);
+
         if (strncmp(header, s->term, s->termlen) != 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: does not match at all",
+                    state->emailid);
             continue;
         }
         val = header + s->termlen;
         if (*val == ':') {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: match found -- getting sender address from header",
+                    state->emailid);
             /* this email was automatically forwarded */
             val ++;
             /* skip extraneous spaces... */
             while (*val == ' ') {
                 val ++;
             }
+            EMAIL_DEBUG(state,
+                    "Email worker %d: skipped extraneous whitespace",
+                    state->emailid);
             if (*val != '\0') {
                 /* we now have the "real" sender of this forward */
+                EMAIL_DEBUG(state,
+                        "Email worker %d: setting %s as the sender",
+                        state->emailid, val);
                 add_email_participant(state, sess, strdup(val), 1);
                 return 1;
+            } else {
+                EMAIL_DEBUG(state,
+                        "Email worker %d: sender address is missing?",
+                        state->emailid, val);
             }
+
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: partial match, but have to skip",
+                    state->emailid);
         }
     }
+    EMAIL_DEBUG(state,
+            "Email worker %d: finished in forwarding_header_check()",
+            state->emailid);
     return 0;
 }
 
@@ -994,7 +1026,14 @@ static int parse_mail_content(openli_email_worker_t *state,
     char *next, *copy, *start, *header, *hdrwrite, *val;
     int len, ret = 0;
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: entering parse_mail_content() for %s",
+            state->emailid, sess->key);
+
     if (*(state->email_forwarding_headers) == NULL) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: no forwarding headers configured, so don't bother",
+                state->emailid);
         return 0;
     }
 
@@ -1003,9 +1042,15 @@ static int parse_mail_content(openli_email_worker_t *state,
      * server
      */
     if (sess->ingest_direction != OPENLI_EMAIL_DIRECTION_OUTBOUND) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: %s is an inbound session, ignoring",
+                state->emailid, sess->key);
         return 0;
     }
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: copying DATA content for %s so we can tokenise",
+            state->emailid, sess->key);
     len = smtpsess->reply_start - smtpsess->command_start;
 
     copy = calloc(sizeof(char), len + 1);
@@ -1015,12 +1060,18 @@ static int parse_mail_content(openli_email_worker_t *state,
     start = copy;
     hdrwrite = header;
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: copy complete, time to look for interesting headers",
+            state->emailid);
     pthread_rwlock_rdlock(state->glob_config_mutex);
 
     while ((next = strstr(start, "\r\n")) != NULL) {
 
         if (next == start) {
             /* empty line, headers are over */
+            EMAIL_DEBUG(state,
+                    "Email worker %d: empty line -- no more headers after this one",
+                    state->emailid);
             forwarding_header_check(state, sess, header);
             break;
         }
@@ -1028,22 +1079,53 @@ static int parse_mail_content(openli_email_worker_t *state,
         if (*start != ' ' && *start != '\t') {
             if (header != hdrwrite) {
 
+                EMAIL_DEBUG(state,
+                        "Email worker %d: got a complete header",
+                        state->emailid);
+
                 if (forwarding_header_check(state, sess, header)) {
                     ret = 1;
+                    EMAIL_DEBUG(state,
+                            "Email worker %d: header was a match!",
+                            state->emailid);
                     break;
+                } else {
+                    EMAIL_DEBUG(state,
+                            "Email worker %d: header was not a match",
+                            state->emailid);
                 }
+
                 memset(header, 0, len + 1);
+            } else {
+                EMAIL_DEBUG(state,
+                        "Email worker %d: have to wait for first header to complete",
+                        state->emailid);
             }
             hdrwrite = header;
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: line begins with whitespace, so is a continuation of previous header",
+                    state->emailid);
         }
+
+        EMAIL_DEBUG(state,
+                "Email worker %d: storing the next header line...",
+                state->emailid);
         memcpy(hdrwrite, start, next - start);
         hdrwrite += (next - start);
         start = next + 2;
     }
+
     pthread_rwlock_unlock(state->glob_config_mutex);
+    EMAIL_DEBUG(state,
+            "Email worker %d: finished parsing headers",
+            state->emailid);
 
     free(header);
     free(copy);
+    EMAIL_DEBUG(state,
+            "Email worker %d: tidied up local copies, parse_mail_content() is over",
+            state->emailid);
     return ret;
 }
 
@@ -1056,21 +1138,43 @@ static void data_content_over(openli_email_worker_t *state,
     smtp_participant_t *sender = NULL;
     int i;
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: processing reply after end of DATA content",
+            state->emailid);
+
     if (smtpsess->reply_code == 250) {
         sess->currstate = OPENLI_SMTP_STATE_DATA_OVER;
         sess->event_time = timestamp;
+        EMAIL_DEBUG(state,
+                "Email worker %d: reply was 250 -- check for forwarding behaviour",
+                state->emailid);
         if (parse_mail_content(state, sess, smtpsess) == 1) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: mail was forwarded by %s, setting them as the sender",
+                    state->emailid, sess->sender.emailaddr);
             activate_latest_sender(state, sess, smtpsess, timestamp, &sender);
 
+            EMAIL_DEBUG(state,
+                    "Email worker %d: checking which CCs we need to keep for this sender",
+                    state->emailid);
             if (smtpsess->activesender && smtpsess->activesender != sender) {
+                EMAIL_DEBUG(state,
+                        "Email worker %d: copy CCs that we have saved under the old 'activesender'",
+                        state->emailid);
                 for (i = smtpsess->activesender->ccs.last_unsent;
                         i < smtpsess->activesender->ccs.curr_command; i++) {
                     copy_smtp_command(&(sender->ccs),
                             &(smtpsess->activesender->ccs.commands[i]));
                 }
+                EMAIL_DEBUG(state,
+                        "Email worker %d: copy completed",
+                        state->emailid);
                 smtpsess->activesender->ccs.curr_command = 0;
                 smtpsess->activesender->last_mail_from = 0;
             } else {
+                EMAIL_DEBUG(state,
+                        "Email worker %d: copy the usual preamble CCs",
+                        state->emailid);
                 for (i = 0; i < smtpsess->preambles.curr_command; i++) {
                     copy_smtp_command(&(sender->ccs),
                             &(smtpsess->preambles.commands[i]));
@@ -1080,44 +1184,93 @@ static void data_content_over(openli_email_worker_t *state,
             smtpsess->activesender = sender;
             sender->active = 1;
             sess->login_sent = 0;
+            EMAIL_DEBUG(state,
+                    "Email worker %d: updated sender to match forwarding header in mail body",
+                    state->emailid);
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: no forwarding headers detected",
+                    state->emailid);
         }
 
         /* generate email send CC and IRI */
+        EMAIL_DEBUG(state,
+                "Email worker %d: generating email-send IRIs if required",
+                state->emailid);
         generate_email_send_iri(state, sess);
+        EMAIL_DEBUG(state,
+                "Email worker %d: generating email-receive IRIs if required",
+                state->emailid);
         generate_email_receive_iri(state, sess);
     } else {
+        EMAIL_DEBUG(state,
+                "Email worker %d: DATA content received reply code %u, returning to RCPT TO OVER state",
+                state->emailid, smtpsess->reply_code);
         sess->currstate = OPENLI_SMTP_STATE_RCPT_TO_OVER;
     }
+
+    EMAIL_DEBUG(state,
+            "Email worker %d: Saving SMTP payloads for DATA_CONTENT CCs for %s:%s -- content",
+            state->emailid, sess->key, sess->sender.emailaddr);
 
     /* Email is sent, produce CCs for all participants who are targets */
     add_new_smtp_command(&(smtpsess->activesender->ccs),
             smtpsess->command_start, SMTP_COMMAND_TYPE_DATA_CONTENT,
             smtpsess->next_command_index);
+    EMAIL_DEBUG(state,
+            "Email worker %d: Saving SMTP payloads for DATA_CONTENT CCs for sender -- reply",
+            state->emailid);
     add_new_smtp_reply(&(smtpsess->activesender->ccs), smtpsess->reply_start,
             smtpsess->contbufread, smtpsess->reply_code, timestamp);
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: Generating DATA_CONTENT CCs for sender",
+            state->emailid);
     generate_smtp_ccs_from_saved(state, sess, smtpsess,
             &(smtpsess->activesender->ccs), sess->sender.emailaddr, 1);
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: Now tackling recipients",
+            state->emailid);
     index[0] = '\0';
     JSLF(pval, smtpsess->recipients, index);
     while (pval) {
         recipient = (smtp_participant_t *)(*pval);
+
+        EMAIL_DEBUG(state,
+                "Email worker %d: recipient %s:%s",
+            state->emailid, sess->key, index);
+
         if (recipient->active == 0) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: recipient %s is inactive, skipping",
+                    state->emailid, index);
             JSLN(pval, smtpsess->recipients, index);
             continue;
         }
 
+        EMAIL_DEBUG(state,
+                "Email worker %d: Saving SMTP payload for DATA Content -- content",
+                state->emailid);
         add_new_smtp_command(&(recipient->ccs), smtpsess->command_start,
                 SMTP_COMMAND_TYPE_DATA_CONTENT, smtpsess->next_command_index);
+        EMAIL_DEBUG(state,
+                "Email worker %d: Saving SMTP payload for DATA Content -- reply",
+                state->emailid);
         add_new_smtp_reply(&(recipient->ccs), smtpsess->reply_start,
                 smtpsess->contbufread, smtpsess->reply_code, timestamp);
 
+        EMAIL_DEBUG(state,
+                "Email worker %d: Generating DATA content CCs",
+                state->emailid);
         generate_smtp_ccs_from_saved(state, sess, smtpsess,
                 &(recipient->ccs), index, 0);
         JSLN(pval, smtpsess->recipients, index);
     }
     smtpsess->next_command_index ++;
+    EMAIL_DEBUG(state,
+            "Email worker %d: All recipients done, data_content_over() complete",
+            state->emailid);
 
 }
 
@@ -1125,13 +1278,25 @@ static int set_sender_using_mail_from(openli_email_worker_t *state,
         emailsession_t *sess, smtp_session_t *smtpsess, uint64_t timestamp,
         smtp_participant_t **sender) {
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: entering set_sender_using_mail_from()",
+            state->emailid);
     if (extract_smtp_participant(state, sess, smtpsess,
                 smtpsess->last_mail_from.command_start,
                 smtpsess->contbufread) == NULL) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: failed to extract participant",
+                state->emailid);
         return -1;
     }
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: extracted sender as %s, now to activate",
+            state->emailid, sess->sender.emailaddr);
     activate_latest_sender(state, sess, smtpsess, timestamp, sender);
+    EMAIL_DEBUG(state,
+            "Email worker %d: set_sender_using_mail_from() completed",
+            state->emailid);
     return 1;
 }
 
@@ -1141,16 +1306,26 @@ static int mail_from_reply(openli_email_worker_t *state,
     int i;
     smtp_participant_t *sender = NULL;
 
+    EMAIL_DEBUG(state,
+            "Email worker %d: processing MAIL FROM reply from server",
+            state->emailid);
+
     smtpsess->last_mail_from.reply_end = smtpsess->contbufread;
     smtpsess->last_mail_from.timestamp = timestamp;
 
     if (smtpsess->last_mail_from.reply_code == 250) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: seen 250 reply code, changing state to MAIL FROM OVER",
+                state->emailid);
         sess->currstate = OPENLI_SMTP_STATE_MAIL_FROM_OVER;
 
         if (smtpsess->authenticated == 0) {
             /* No authentication, so we have to rely on MAIL FROM to
              * identify the sender (even though it could be spoofed)
              */
+            EMAIL_DEBUG(state,
+                    "Email worker %d: setting sender for session %s based on MAIL FROM address",
+                    state->emailid, sess->key);
             if (set_sender_using_mail_from(state, sess, smtpsess,
                     timestamp, &sender) < 0) {
                 return -1;
@@ -1158,13 +1333,23 @@ static int mail_from_reply(openli_email_worker_t *state,
             sess->login_time = timestamp;
         }
 
+        EMAIL_DEBUG(state,
+                "Email worker %d: clearing participant list",
+                state->emailid);
+
         clear_email_participant_list(state, sess);
         if (smtpsess->last_ehlo_reply_code >= 200 &&
                 smtpsess->last_ehlo_reply_code < 300) {
 
+            EMAIL_DEBUG(state,
+                    "Email worker %d: last EHLO reply was positive",
+                    state->emailid);
             if (smtpsess->authenticated == 0 && sender && sender->active == 0) {
                 /* this is either a new sender or a previously
                  * inactive one, so we should send a login success IRI */
+                EMAIL_DEBUG(state,
+                        "Email worker %d: triggering creation of login success IRIs for MAIL FROM sender %s",
+                        state->emailid);
                 generate_email_login_success_iri(state, sess,
                         sess->sender.emailaddr);
                 sess->login_sent = 1;
@@ -1177,12 +1362,21 @@ static int mail_from_reply(openli_email_worker_t *state,
                  * target address. This will be handled by the CC generation
                  * methods.
                  */
+                EMAIL_DEBUG(state,
+                        "Email worker %d: copying preamble CCs for MAIL FROM sender",
+                        state->emailid);
                 for (i = 0; i < smtpsess->preambles.curr_command; i++) {
                     copy_smtp_command(&(sender->ccs),
                             &(smtpsess->preambles.commands[i]));
                 }
+                EMAIL_DEBUG(state,
+                        "Email worker %d: copy successful",
+                        state->emailid);
                 smtpsess->activesender = sender;
             } else {
+                EMAIL_DEBUG(state,
+                        "Email worker %d: MAIL FROM sender does not require a login IRI for session %s",
+                        state->emailid, sess->key);
                 sender = smtpsess->activesender;
             }
 
@@ -1195,21 +1389,38 @@ static int mail_from_reply(openli_email_worker_t *state,
             /* Generate the CCs for the MAIL FROM command */
             copy_smtp_command(&(sender->ccs), &(smtpsess->last_mail_from));
 
+            EMAIL_DEBUG(state,
+                    "Email worker %d: saving MAIL FROM CCs for session %s",
+                    state->emailid, sess->key);
             /* Send the CCs */
             /*
             generate_smtp_ccs_from_saved(state, sess, smtpsess,
                     &(sender->ccs), sess->sender.emailaddr, 1);
             */
+        } else {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: MAIL FROM for session %s after failed EHLO, ignoring",
+                    state->emailid, sess->key);
         }
     } else {
         sess->currstate = OPENLI_SMTP_STATE_EHLO_OVER;
+        EMAIL_DEBUG(state,
+                "Email worker %d: MAIL FROM for session %s got a reply code of %u, ignoring",
+                state->emailid, sess->key, smtpsess->last_mail_from.reply_code);
     }
+    EMAIL_DEBUG(state,
+            "Email worker %d: MAIL FROM reply processing complete",
+            state->emailid);
     return 1;
 }
 
 static int process_auth_credentials(smtp_session_t *smtpsess) {
 
     char *copy, *ptr, *token;
+
+    EMAIL_DEBUG(state,
+            "Email worker %d: processing extracted authentication credentials (method=%d)",
+            state->emailid, smtpsess->auth_method);
 
     copy = calloc((smtpsess->contbufused - smtpsess->command_start) + 1,
             sizeof(char));
@@ -1218,15 +1429,27 @@ static int process_auth_credentials(smtp_session_t *smtpsess) {
             smtpsess->contbufused - smtpsess->command_start);
 
     ptr = copy;
+    EMAIL_DEBUG(state,
+            "Email worker %d: copied credentials to local buffer",
+            state->emailid);
+    EMAIL_DEBUG(state,
+            "Email worker %d: looking for whitespace for end of credentials",
+            state->emailid);
     token = strtok(ptr, " \t\r\n");
 
     if (!token) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: no whitespace found",
+                state->emailid);
         free(copy);
         return -1;
     }
 
     if (smtpsess->auth_method == SMTP_AUTH_METHOD_PLAIN ||
             smtpsess->auth_method == SMTP_AUTH_METHOD_CRAMMD5) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: copying token into smtpsess->auth_creds",
+                state->emailid);
         if (smtpsess->auth_creds) {
             free(smtpsess->auth_creds);
         }
@@ -1235,10 +1458,20 @@ static int process_auth_credentials(smtp_session_t *smtpsess) {
         /* username should be sent first, password will be the following
          * client message */
         if (smtpsess->auth_creds == NULL) {
+            EMAIL_DEBUG(state,
+                    "Email worker %d: copying username token into smtpsess->auth_creds",
+                    state->emailid);
             smtpsess->auth_creds = strdup(token);
         }
     }
+    EMAIL_DEBUG(state,
+            "Email worker %d: freeing local copy of auth credentials",
+            state->emailid);
     free(copy);
+    EMAIL_DEBUG(state,
+            "Email worker %d: process_auth_credentials completed",
+            state->emailid);
+
     return 1;
 }
 
