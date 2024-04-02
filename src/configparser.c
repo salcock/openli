@@ -86,6 +86,19 @@ static int check_onoff(char *value) {
     return -1;
 }
 
+static int set_log_level(char *value) {
+    if (strcasecmp(value, "info") == 0) {
+        return 1;
+    }
+    if (strcasecmp(value, "debug") == 0) {
+        return 2;
+    }
+    if (strcasecmp(value, "extreme") == 0) {
+        return 3;
+    }
+    return 0;
+}
+
 static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         yaml_node_t *inputs) {
 
@@ -1306,6 +1319,12 @@ static int global_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "etsitls") == 0) {
         glob->etsitls = check_onoff((char *)value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "emailloglevel") == 0) {
+        glob->email_log_level = set_log_level((char *)value->data.scalar.value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&

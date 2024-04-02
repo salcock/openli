@@ -101,7 +101,7 @@ void sync_thread_publish_reload(collector_sync_t *sync);
 int sync_thread_main(collector_sync_t *sync);
 void sync_reconnect_all_mediators(collector_sync_t *sync);
 void sync_drop_all_mediators(collector_sync_t *sync);
-
+void sync_update_log_levels(void **zmqsocks, int sockcount, uint8_t level);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -2010,6 +2010,10 @@ static int reload_collector_config(collector_global_t *glob,
     logger(LOG_DEBUG, "OpenLI: session idle timeout for POP3 sessions is now %u minutes", glob->email_timeouts.pop3);
     pthread_rwlock_unlock(&(glob->email_config_mutex));
 
+    sync_update_log_levels(sync->zmq_emailsocks, glob->email_threads,
+            newstate.email_log_level);
+    glob->email_log_level = newstate.email_log_level;
+
 endreload:
     clear_global_config(&newstate);
     return ret;
@@ -2315,7 +2319,7 @@ int main(int argc, char *argv[]) {
         glob->emailworkers[i].default_compress_delivery =
                 OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
 
-        glob->emailworkers[i].log_level = OPENLI_EMAIL_WORKER_LOG_DEBUG;
+        glob->emailworkers[i].log_level = glob->email_log_level;
 
         pthread_create(&(glob->emailworkers[i].threadid), NULL,
                 start_email_worker_thread, (void *)&(glob->emailworkers[i]));

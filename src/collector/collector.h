@@ -342,6 +342,7 @@ typedef struct collector_global {
     uint8_t email_ingest_use_targetid;
     int emailsockfd;
     email_ingestor_state_t *email_ingestor;
+    uint8_t email_log_level;
 
 } collector_global_t;
 

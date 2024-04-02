@@ -60,6 +60,7 @@ enum {
     OPENLI_EXPORT_EMAILCC = 21,
     OPENLI_EXPORT_EMAILIRI = 22,
     OPENLI_EXPORT_RAW_CC = 23,
+    OPENLI_EXPORT_UPDATE_LOG_LEVEL = 24,
 };
 
 /* This structure is also used for IPMMCCs since they require the same
@@ -188,6 +189,7 @@ struct openli_export_recv {
         openli_rawip_job_t rawip;
         openli_emailiri_job_t emailiri;
         openli_emailcc_job_t emailcc;
+        uint8_t log_level;
     } data;
 };
 

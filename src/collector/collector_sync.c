@@ -325,6 +325,21 @@ void sync_thread_publish_reload(collector_sync_t *sync) {
     forward_provmsg_to_voipsync(sync, NULL, 0, OPENLI_PROTO_CONFIG_RELOADED);
 }
 
+void sync_update_log_levels(void **zmqsocks, int sockcount, uint8_t level) {
+
+    int i;
+    openli_export_recv_t *expmsg;
+
+    for (i = 0; i < sockcount; i++) {
+        expmsg = (openli_export_recv_t *)calloc(1,
+                sizeof(openli_export_recv_t));
+        expmsg->type = OPENLI_EXPORT_UPDATE_LOG_LEVEL;
+        expmsg->data.log_level = level;
+
+        publish_openli_msg(zmqsocks[i], expmsg);
+    }
+}
+
 static int export_raw_sync_packet_content(access_plugin_t *p,
         collector_sync_t *sync, ipintercept_t *ipint, void *parseddata,
         uint32_t seqno, uint32_t cin) {

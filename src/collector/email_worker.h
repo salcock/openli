@@ -132,9 +132,9 @@ typedef struct openli_email_captured {
 
 } openli_email_captured_t;
 
-#define OPENLI_EMAIL_WORKER_LOG_EXTREME 1
+#define OPENLI_EMAIL_WORKER_LOG_EXTREME 3
 #define OPENLI_EMAIL_WORKER_LOG_DEBUG 2
-#define OPENLI_EMAIL_WORKER_LOG_INFO 3
+#define OPENLI_EMAIL_WORKER_LOG_INFO 1
 
 
 typedef struct openli_email_worker {
@@ -258,12 +258,12 @@ int generate_email_cc_from_pop3_payload(openli_email_worker_t *state,
         uint64_t timestamp, uint8_t dir);
 
 #define EMAIL_VERBOSE(state, format, ...) \
-    if (state->log_level <= OPENLI_EMAIL_WORKER_LOG_EXTREME) { \
+    if (state->log_level >= OPENLI_EMAIL_WORKER_LOG_EXTREME) { \
         logger(LOG_INFO, format, __VA_ARGS__); \
     }
 
 #define EMAIL_DEBUG(state, format, ...) \
-    if (state->log_level <= OPENLI_EMAIL_WORKER_LOG_DEBUG) { \
+    if (state->log_level >= OPENLI_EMAIL_WORKER_LOG_DEBUG) { \
         logger(LOG_INFO, format, __VA_ARGS__); \
     }
 

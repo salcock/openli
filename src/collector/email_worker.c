@@ -1491,6 +1491,11 @@ static int process_sync_thread_message(openli_email_worker_t *state) {
             return -1;
         }
 
+        if (msg->type == OPENLI_EXPORT_UPDATE_LOG_LEVEL) {
+            state->log_level = msg->data.log_level;
+            assert(state->log_level <= OPENLI_EMAIL_WORKER_LOG_EXTREME);
+        }
+
         if (msg->type == OPENLI_EXPORT_PROVISIONER_MESSAGE) {
             handle_provisioner_message(state, msg);
         }
