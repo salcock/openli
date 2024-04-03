@@ -572,7 +572,6 @@ static char *extract_smtp_participant(openli_email_worker_t *state,
     } else {
         EMAIL_DEBUG(state,
                 "Email worker %d: found a '>' in the buffer", state->emailid);
-        return NULL;
     }
 
     if (addrstart >= (char *)(smtpstate->contbuffer + contend)) {
@@ -1824,7 +1823,7 @@ static int mail_from_reply(openli_email_worker_t *state,
                  * inactive one, so we should send a login success IRI */
                 EMAIL_DEBUG(state,
                         "Email worker %d: triggering creation of login success IRIs for MAIL FROM sender %s",
-                        state->emailid);
+                        state->emailid, sess->sender.emailaddr);
                 generate_email_login_success_iri(state, sess,
                         sess->sender.emailaddr);
                 sess->login_sent = 1;
