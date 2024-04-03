@@ -1,4 +1,4 @@
-openli (1.1.5-1) unstable; urgency=medium
+openli (1.1.5-1~rc03) unstable; urgency=medium
 
   * Fix bug where pcap disk output was not producing pcap files for IP
     intercepts that were wrapped in a vendor mirroring header.
@@ -16,8 +16,14 @@ openli (1.1.5-1) unstable; urgency=medium
   * Enable TCP keep alives on all inter-component communications sessions.
   * Fix issue where socket-level errors would not be properly detected on
     the control socket linking the provisioner and a collector.
+  * RADIUS: fix assertion failure if a session does not have a
+    NASIdentifier.
+  * RADIUS: fix erroneous complaints about removing an IP->session
+    mapping that did not exist.
+  * Email: fix bad encoding of the recipient list in IRIs.
+  * Email: add ability to enable very verbose debug logging.
 
- -- Shane Alcock <salcock@searchlight.nz>  Mon, 19 Feb 2024 14:14:30 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Thu, 04 Apr 2024 11:05:54 +1300
 
 openli (1.1.4-1) unstable; urgency=medium
 
