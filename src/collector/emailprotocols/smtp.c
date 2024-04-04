@@ -192,63 +192,6 @@ void free_smtp_session_state(openli_email_worker_t *state,
             state->emailid, sess->key);
 }
 
-static void set_all_smtp_participants_inactive(openli_email_worker_t *state,
-        smtp_session_t *smtpsess) {
-
-    PWord_t pval;
-    uint8_t index[1024];
-    smtp_participant_t *part;
-
-    EMAIL_DEBUG(state,
-            "Email worker %d: entering set_all_smtp_participants_inactive()",
-            state->emailid);
-    index[0] = '\0';
-    JSLF(pval, smtpsess->senders, index);
-    while (pval != NULL) {
-        EMAIL_DEBUG(state,
-                "Email worker %d: setting sender %s as inactive",
-                state->emailid, index);
-        part = (smtp_participant_t *)(*pval);
-        if (!smtpsess->authenticated) {
-            part->active = 0;
-        }
-        part->ccs.curr_command = 0;
-        part->ccs.last_unsent = 0;
-        JSLN(pval, smtpsess->senders, index);
-    }
-
-    if (!smtpsess->authenticated) {
-        EMAIL_DEBUG(state,
-                "Email worker %d: setting activesender to NULL",
-                state->emailid);
-        smtpsess->activesender = NULL;
-    } else {
-        EMAIL_DEBUG(state,
-                "Email worker %d: activesender was authenticated, so keeping them as active",
-                state->emailid);
-    }
-
-    EMAIL_DEBUG(state,
-            "Email worker %d: finished with senders, moving on to recipients",
-            state->emailid);
-    index[0] = '\0';
-    JSLF(pval, smtpsess->recipients, index);
-    while (pval != NULL) {
-        EMAIL_DEBUG(state,
-                "Email worker %d: setting recipient %s as inactive",
-                state->emailid, index);
-        part = (smtp_participant_t *)(*pval);
-        part->active = 0;
-        part->ccs.curr_command = 0;
-        part->ccs.last_unsent = 0;
-        JSLN(pval, smtpsess->recipients, index);
-    }
-
-    EMAIL_DEBUG(state,
-            "Email worker %d: finished with recipients, returning",
-            state->emailid);
-}
-
 static int generate_smtp_ccs_from_saved(openli_email_worker_t *state,
         emailsession_t *sess, smtp_session_t *smtpsess,
         smtp_cc_list_t *ccs, const char *participant, uint8_t is_sender) {
@@ -363,6 +306,71 @@ static int generate_smtp_ccs_from_saved(openli_email_worker_t *state,
             state->emailid, sess->key);
     ccs->last_unsent = ccs->curr_command;
     return 0;
+}
+
+static void set_all_smtp_participants_inactive(openli_email_worker_t *state,
+        emailsession_t *sess, smtp_session_t *smtpsess) {
+
+    PWord_t pval;
+    uint8_t index[1024];
+    smtp_participant_t *part;
+
+    EMAIL_DEBUG(state,
+            "Email worker %d: entering set_all_smtp_participants_inactive()",
+            state->emailid);
+    index[0] = '\0';
+    JSLF(pval, smtpsess->senders, index);
+    while (pval != NULL) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: setting sender %s as inactive",
+                state->emailid, index);
+        part = (smtp_participant_t *)(*pval);
+        if (part->active) {
+            generate_smtp_ccs_from_saved(state, sess, smtpsess, &(part->ccs),
+                    index, 1);
+        }
+        if (!smtpsess->authenticated) {
+            part->active = 0;
+        }
+        part->ccs.curr_command = 0;
+        part->ccs.last_unsent = 0;
+        JSLN(pval, smtpsess->senders, index);
+    }
+
+    if (!smtpsess->authenticated) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: setting activesender to NULL",
+                state->emailid);
+        smtpsess->activesender = NULL;
+    } else {
+        EMAIL_DEBUG(state,
+                "Email worker %d: activesender was authenticated, so keeping them as active",
+                state->emailid);
+    }
+
+    EMAIL_DEBUG(state,
+            "Email worker %d: finished with senders, moving on to recipients",
+            state->emailid);
+    index[0] = '\0';
+    JSLF(pval, smtpsess->recipients, index);
+    while (pval != NULL) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: setting recipient %s as inactive",
+                state->emailid, index);
+        part = (smtp_participant_t *)(*pval);
+        if (part->active) {
+            generate_smtp_ccs_from_saved(state, sess, smtpsess, &(part->ccs),
+                    index, 0);
+        }
+        part->active = 0;
+        part->ccs.curr_command = 0;
+        part->ccs.last_unsent = 0;
+        JSLN(pval, smtpsess->recipients, index);
+    }
+
+    EMAIL_DEBUG(state,
+            "Email worker %d: finished with recipients, returning",
+            state->emailid);
 }
 
 static int copy_smtp_command(openli_email_worker_t *state,
@@ -799,6 +807,13 @@ static int find_other_command(openli_email_worker_t *state,
     EMAIL_DEBUG(state,
             "Email worker %d: entering find_other_command for %s",
             state->emailid, emailsess->key);
+
+    if (sess->contbufused - sess->contbufread < 4) {
+        EMAIL_DEBUG(state,
+                "Email worker %d: not enough data remaining to fit any command name -- exiting",
+                state->emailid);
+        return 0;
+    }
 
     if (find_command_by_name(state, sess, "RCPT TO:", 0)) {
         return 1;
@@ -2086,7 +2101,7 @@ static int authenticate_success(openli_email_worker_t *state,
     }
 
     EMAIL_DEBUG(state,
-            "Email worker %d: extracting auth credentials following auth failure -- default domain is %s",
+            "Email worker %d: extracting auth credentials following auth success -- default domain is %s",
             state->emailid, defaultdomain);
     r = extract_sender_from_auth_creds(state, sess, smtpsess, defaultdomain,
             &sendername, 1);
@@ -2558,7 +2573,7 @@ static int process_next_smtp_state(openli_email_worker_t *state,
         if ((r = find_mail_from_reply_end(state, smtpsess)) == 1) {
             EMAIL_DEBUG(state,
                     "Email worker %d: found a MAIL FROM reply code -- %u",
-                    state->emailid, smtpsess->reply_code);
+                    state->emailid, smtpsess->last_mail_from.reply_code);
             return mail_from_reply(state, sess, smtpsess, timestamp);
         } else if (r < 0) {
             EMAIL_DEBUG(state,
@@ -2609,8 +2624,8 @@ static int process_next_smtp_state(openli_email_worker_t *state,
         EMAIL_DEBUG(state,
                 "Email worker %d: checking for end of 'other' command",
                 state->emailid);
-        if ((r = find_smtp_reply_code(state, smtpsess,
-                    &(smtpsess->reply_code))) == 1) {
+        if ((r = find_next_crlf(state, smtpsess,
+                    smtpsess->command_start)) == 1) {
             EMAIL_DEBUG(state,
                     "Email worker %d: end of other command found",
                     state->emailid);
@@ -2941,7 +2956,7 @@ static int process_next_smtp_state(openli_email_worker_t *state,
                         "Email worker %d: clearing participant list",
                         state->emailid);
                 clear_email_participant_list(state, sess);
-                set_all_smtp_participants_inactive(state, smtpsess);
+                set_all_smtp_participants_inactive(state, sess, smtpsess);
             } else {
                 EMAIL_DEBUG(state,
                         "Email worker %d: no need to clear participant list",
