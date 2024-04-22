@@ -1649,7 +1649,7 @@ static int process_received_packet(openli_email_worker_t *state) {
         if (rc < 0) {
             if (errno == EAGAIN) {
                 EMAIL_DEBUG(state, "Email worker %d: no more packets available from collector threads", state->emailid);
-                return 0;
+                break;
             }
             logger(LOG_INFO,
                     "OpenLI: error while receiving email packet in email thread %d: %s", state->emailid, strerror(errno));
