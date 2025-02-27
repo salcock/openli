@@ -33,6 +33,7 @@
 #include "collector.h"
 #include "intercept.h"
 #include "ipmmiri.h"
+#include "epscc.h"
 
 #include <sys/timerfd.h>
 #include <unistd.h>
@@ -270,6 +271,38 @@ static inline void populate_intercept_common(published_intercept_msg_t *src,
     src->delivcc = NULL;
     src->encryptkey = NULL;
     src->targetagency = NULL;
+}
+
+static int x2x3_ignore_check(intercept_common_t *common, uint8_t xtype,
+        struct timeval *tv) {
+
+    if (common->tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
+        if (xtype == X2X3_PDUTYPE_X3) {
+            return 0;
+        }
+    }
+
+    if (common->tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
+        if (xtype == X2X3_PDUTYPE_X2) {
+            return 0;
+        }
+    }
+
+
+    if (common->tostart_time > tv->tv_sec) {
+        return 0;
+    }
+
+    if (common->toend_time > 0 && common->toend_time <= tv->tv_sec) {
+        return 0;
+    }
+
+    if (common->targetagency == NULL || strcmp(common->targetagency,
+                "pcapdisk") == 0) {
+        return 0;
+    }
+
+    return 1;
 }
 
 static inline uint8_t x2x3dir_to_etsidir(uint16_t xdir) {
@@ -657,22 +690,8 @@ static int handle_x2_sip_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
          * intercept) so ignore it */
         return 0;
     }
-    if (vint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
-        return 0;
-    }
     get_x2x3_pdu_timestamp(&tv, cond_attrs);
-
-    if (vint->common.tostart_time > tv.tv_sec) {
-        return 0;
-    }
-
-    if (vint->common.toend_time > 0 && vint->common.toend_time <=
-            tv.tv_sec) {
-        return 0;
-    }
-
-    if (vint->common.targetagency == NULL || strcmp(vint->common.targetagency,
-                "pcapdisk") == 0) {
+    if (x2x3_ignore_check(&(vint->common), X2X3_PDUTYPE_X2, &tv) == 0) {
         return 0;
     }
 
@@ -712,6 +731,44 @@ static int handle_x2_sip_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
     return 1;
 }
 
+static int handle_x3_gtpu_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
+        uint8_t *payload, uint32_t plen, x2x3_cond_attr_t **cond_attrs) {
+
+    ipintercept_t *ipint;
+    openli_export_recv_t *msg;
+    struct timeval tv;
+    gtp_header_properties_t props;
+
+    HASH_FIND(hh_xid, xinp->ipxids, hdr->xid, sizeof(uuid_t), ipint);
+    if (!ipint) {
+        return 0;
+    }
+    get_x2x3_pdu_timestamp(&tv, cond_attrs);
+    if (x2x3_ignore_check(&(ipint->common), X2X3_PDUTYPE_X3, &tv) == 0) {
+        return 0;
+    }
+
+    if (ipint->accesstype != INTERNET_ACCESS_TYPE_MOBILE) {
+        logger(LOG_INFO, "OpenLI: warning -- ignoring GTP-U X3 PDU received via %s because the matching intercept (%s) has not been correctly configured as a mobile data intercept", xinp->identifier, ipint->common.liid);
+        return 0;
+    }
+
+    if (parse_gtp_header(payload, plen, &props) <= 0) {
+        logger(LOG_INFO, "OpenLI: warning -- unable to parse GTP-U header received via X2/X3 input %s for LIID %s", xinp->identifier, ipint->common.liid);
+        return 0;
+    }
+
+    payload += props.hdrlen;
+    plen -= props.hdrlen;
+
+    msg = create_epscc_job(ipint->common.liid,
+            x2x3_correlation_to_cin(hdr->correlation), ipint->common.destid,
+            x2x3dir_to_etsidir(ntohs(hdr->payloaddir)), payload, plen, 0,
+            props.seqno);
+    publish_openli_msg(xinp->zmq_pubsocks[ipint->common.seqtrackerid], msg);
+
+    return 1;
+}
 
 static int handle_x3_rtp_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
         uint8_t *payload, uint32_t plen, x2x3_cond_attr_t **cond_attrs) {
@@ -727,22 +784,8 @@ static int handle_x3_rtp_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
         return 0;
     }
 
-    if (vint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
-        return 0;
-    }
     get_x2x3_pdu_timestamp(&tv, cond_attrs);
-
-    if (vint->common.tostart_time > tv.tv_sec) {
-        return 0;
-    }
-
-    if (vint->common.toend_time > 0 && vint->common.toend_time <=
-            tv.tv_sec) {
-        return 0;
-    }
-
-    if (vint->common.targetagency == NULL || strcmp(vint->common.targetagency,
-                "pcapdisk") == 0) {
+    if (x2x3_ignore_check(&(vint->common), X2X3_PDUTYPE_X3, &tv) == 0) {
         return 0;
     }
 
@@ -818,6 +861,13 @@ static int handle_x3_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
             }
             break;
 
+        case X2X3_PAYLOAD_FORMAT_GTP_U:
+            if (handle_x3_gtpu_pdu(xinp, hdr, payload, plen, cond_attrs) < 0) {
+                logger(LOG_INFO, "OpenLI: X2/X3 thread %s encountered an error while handling X3-GTP-U PDU from %s", xinp->identifier, clientip);
+                return -1;
+            }
+            break;
+
         case X2X3_PAYLOAD_FORMAT_ETSI_102232:
         case X2X3_PAYLOAD_FORMAT_3GPP_33128:
         case X2X3_PAYLOAD_FORMAT_3GPP_33108:
@@ -825,7 +875,6 @@ static int handle_x3_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
         case X2X3_PAYLOAD_FORMAT_IPV4_PACKET:
         case X2X3_PAYLOAD_FORMAT_IPV6_PACKET:
         case X2X3_PAYLOAD_FORMAT_ETHERNET:
-        case X2X3_PAYLOAD_FORMAT_GTP_U:
         case X2X3_PAYLOAD_FORMAT_MSRP:
         case X2X3_PAYLOAD_FORMAT_MIME:
         case X2X3_PAYLOAD_FORMAT_UNSTRUCTURED:

@@ -723,6 +723,43 @@ end_gtpc_processing:
 
 }
 
+int parse_gtp_header(uint8_t *headerstart, uint32_t plen,
+        gtp_header_properties_t *props) {
+
+    if (((*headerstart) & 0xe8) == 0x48) {
+        /* GTPv2 */
+        gtpv2_header_teid_t *v2hdr = (gtpv2_header_teid_t *)headerstart;
+
+        if (plen <= sizeof(gtpv2_header_teid_t)) {
+            return -1;
+        }
+
+        props->msgtype = v2hdr->msgtype;
+        props->teid = ntohl(v2hdr->teid);
+        props->seqno = ntohs(v2hdr->seqno);
+        props->hdrlen = sizeof(gtpv2_header_teid_t);
+        props->msglen = ntohs(v2hdr->msglen);
+
+    } else if (((*headerstart) & 0xe0) == 0x20) {
+        /* GTPv1 */
+        gtpv1_header_t *v1hdr = (gtpv1_header_t *)headerstart;
+
+        if (plen <= sizeof(gtpv1_header_t)) {
+            return -1;
+        }
+
+        props->msgtype = v1hdr->msgtype;
+        props->teid = ntohl(v1hdr->teid);
+        props->seqno = ntohs(v1hdr->seqno);
+        props->msglen = ntohs(v1hdr->msglen);
+        props->hdrlen = sizeof(gtpv1_header_t);
+    } else {
+        return 0;
+    }
+
+    return 1;
+}
+
 static void process_gtp_packet(openli_gtp_worker_t *worker,
         libtrace_packet_t *packet) {
     uint8_t *payload;
@@ -730,9 +767,7 @@ static void process_gtp_packet(openli_gtp_worker_t *worker,
     uint8_t proto;
     uint32_t rem;
     void *transport;
-    uint8_t msgtype;
-    uint32_t teid;
-    uint16_t seqno = 0;
+    gtp_header_properties_t props;
 
     if (packet == NULL) {
         return;
@@ -754,40 +789,16 @@ static void process_gtp_packet(openli_gtp_worker_t *worker,
         plen = rem;
     }
 
-    if (((*payload) & 0xe8) == 0x48) {
-        /* GTPv2 */
-        gtpv2_header_teid_t *v2hdr = (gtpv2_header_teid_t *)payload;
-
-        if (plen <= sizeof(gtpv2_header_teid_t)) {
-            return;
-        }
-
-        msgtype = v2hdr->msgtype;
-        teid = ntohl(v2hdr->teid);
-        seqno = ntohs(v2hdr->seqno);
-        payload += sizeof(gtpv2_header_teid_t);
-        plen -= sizeof(gtpv2_header_teid_t);
-
-    } else if (((*payload) & 0xe0) == 0x20) {
-        /* GTPv1 */
-        gtpv1_header_t *v1hdr = (gtpv1_header_t *)payload;
-
-        if (plen <= sizeof(gtpv1_header_t)) {
-            return;
-        }
-
-        msgtype = v1hdr->msgtype;
-        teid = ntohl(v1hdr->teid);
-        seqno = ntohs(v1hdr->seqno);
-        payload += sizeof(gtpv1_header_t);
-        plen -= sizeof(gtpv1_header_t);
-    } else {
+    if (parse_gtp_header(payload, plen, &props) <= 0) {
         return;
     }
+    payload += props.hdrlen;
+    plen -= props.hdrlen;
 
-    if (msgtype == 0xff) {
+    if (props.msgtype == 0xff) {
         /* This is GTP-U */
-        process_gtp_u_packet(worker, packet, payload, plen, teid, seqno);
+        process_gtp_u_packet(worker, packet, payload, plen,
+                props.teid, props.seqno);
     } else {
         /* This is GTP-C */
         process_gtp_c_packet(worker, packet);

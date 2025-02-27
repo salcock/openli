@@ -47,6 +47,14 @@ typedef struct gtpv2_header_teid {
     uint32_t seqno;
 } PACKED gtpv2_header_teid_t;
 
+typedef struct gtp_header_properties {
+    uint8_t msgtype;
+    uint16_t msglen;
+    uint32_t teid;
+    uint32_t seqno;
+    uint8_t hdrlen;
+} gtp_header_properties_t;
+
 enum {
     GTPV1_CREATE_PDP_CONTEXT_REQUEST = 16,
     GTPV1_CREATE_PDP_CONTEXT_RESPONSE = 17,
@@ -74,5 +82,7 @@ enum {
 };
 
 uint8_t gtp_get_parsed_version(void *parseddata);
+int parse_gtp_header(uint8_t *headerstart, uint32_t plen,
+        gtp_header_properties_t *props);
 
 #endif
