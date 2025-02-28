@@ -37,12 +37,15 @@
 
 openli_export_recv_t *create_epscc_job(char *liid, uint32_t cin,
         uint32_t destid, uint8_t dir, uint8_t *ipcontent, uint32_t ipclen,
-        uint8_t icetype, uint16_t gtpseqno);
+        uint8_t icetype, uint16_t gtpseqno, struct timeval *tv);
 
 wandder_encoded_result_t *encode_epscc_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, const char *liid, uint32_t cin,
         uint16_t gtpseqno, uint8_t dir, struct timeval tv, uint8_t icetype,
         uint32_t ipclen);
+
+openli_export_recv_t *create_epscc_job_from_packet(uint32_t cin, char *liid,
+        uint32_t destid, libtrace_packet_t *pkt, uint8_t dir);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

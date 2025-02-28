@@ -38,6 +38,7 @@
 #include "collector_publish.h"
 #include "etsili_core.h"
 #include "ipcc.h"
+#include "epscc.h"
 
 static inline static_ipcache_t *find_static_cached(prefix_t *prefix,
         colthread_local_t *loc) {
@@ -150,7 +151,7 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                     msg = create_rawip_cc_job(matchsess->common.liid,
                         matchsess->common.destid, pkt);
                 } else {
-                    msg = create_ipcc_job(matchsess->cin,
+                    msg = create_ipcc_job_from_packet(matchsess->cin,
                         matchsess->common.liid, matchsess->common.destid, pkt,
                         dir);
                 }
@@ -216,11 +217,11 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
                     } else if (sess->accesstype ==
                             INTERNET_ACCESS_TYPE_MOBILE) {
 
-                        msg = create_epscc_job_from_ip(sess->cin,
+                        msg = create_epscc_job_from_packet(sess->cin,
                                 sess->common.liid, sess->common.destid, pkt, 0);
                     } else {
-                        msg = create_ipcc_job(sess->cin, sess->common.liid,
-                                sess->common.destid, pkt, 0);
+                        msg = create_ipcc_job_from_packet(sess->cin,
+                                sess->common.liid, sess->common.destid, pkt, 0);
                     }
                     if (msg != NULL) {
                         publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
@@ -305,10 +306,10 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
                 msg = create_rawip_cc_job(sess->common.liid,
                         sess->common.destid, pkt);
             } else if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE) {
-                msg = create_epscc_job_from_ip(sess->cin,
+                msg = create_epscc_job_from_packet(sess->cin,
                         sess->common.liid, sess->common.destid, pkt, 0);
             } else {
-                msg = create_ipcc_job(sess->cin, sess->common.liid,
+                msg = create_ipcc_job_from_packet(sess->cin, sess->common.liid,
                         sess->common.destid, pkt, 0);
             }
             if (msg != NULL) {
@@ -341,10 +342,10 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
                 msg = create_rawip_cc_job(sess->common.liid,
                         sess->common.destid, pkt);
             } else if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE) {
-                msg = create_epscc_job_from_ip(sess->cin,
+                msg = create_epscc_job_from_packet(sess->cin,
                         sess->common.liid, sess->common.destid, pkt, 1);
             } else {
-                msg = create_ipcc_job(sess->cin, sess->common.liid,
+                msg = create_ipcc_job_from_packet(sess->cin, sess->common.liid,
                         sess->common.destid, pkt, 1);
             }
             if (msg != NULL) {

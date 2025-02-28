@@ -170,7 +170,7 @@ static inline int generic_mm_comm_contents(libtrace_packet_t *pkt,
                 msg = create_rawip_cc_job(rtp->common.liid,
                         rtp->common.destid, pkt);
             } else {
-                msg = create_ipcc_job(rtp->cin, rtp->common.liid,
+                msg = create_ipcc_job_from_packet(rtp->cin, rtp->common.liid,
                         rtp->common.destid, pkt, ETSI_DIR_TO_TARGET);
                 msg->type = OPENLI_EXPORT_IPMMCC;
             }

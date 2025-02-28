@@ -295,45 +295,10 @@ int push_vendor_mirrored_ipcc_job(void *pubqueue,
     return 0;
 }
 
-openli_export_recv_t *create_epscc_job_from_ip(uint32_t cin, char *liid,
-        uint32_t destid, libtrace_packet_t *pkt, uint8_t dir) {
+openli_export_recv_t *create_ipmmcc_job_from_generic_content(
+        uint32_t cin, char *liid, uint32_t destid, uint8_t *content,
+        uint32_t contentlen, uint8_t dir, struct timeval *timestamp) {
 
-    void *l3;
-    uint32_t rem;
-    uint16_t ethertype;
-    openli_export_recv_t *msg = NULL;
-
-    msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
-    if (msg == NULL) {
-        return msg;
-    }
-
-    l3 = trace_get_layer3(pkt, &ethertype, &rem);
-
-    if (l3 == NULL || rem == 0) {
-        free(msg);
-        return NULL;
-    }
-
-    msg->type = OPENLI_EXPORT_EPSCC;
-    msg->destid = destid;
-    msg->ts = trace_get_timeval(pkt);
-    msg->data.mobcc.liid = strdup(liid);
-    msg->data.mobcc.ipcontent = calloc(rem, sizeof(uint8_t));
-    memcpy(msg->data.mobcc.ipcontent, l3, rem);
-    msg->data.mobcc.ipclen = rem;
-    msg->data.mobcc.cin = cin;
-    msg->data.mobcc.dir = dir;
-
-    msg->data.mobcc.icetype = 0;
-    msg->data.mobcc.gtpseqno = 0;
-
-    return msg;
-}
-
-openli_export_recv_t *create_ipmmcc_job_from_rtp(uint32_t cin, char *liid,
-        uint32_t destid, uint8_t *rtpstart, uint32_t rtplen, uint8_t dir,
-        struct timeval timestamp) {
 
     openli_export_recv_t *msg = NULL;
     uint32_t x;
@@ -346,7 +311,7 @@ openli_export_recv_t *create_ipmmcc_job_from_rtp(uint32_t cin, char *liid,
 
     msg->type = OPENLI_EXPORT_IPMMCC;
     msg->destid = destid;
-    msg->ts = timestamp;
+    msg->ts = *timestamp;
 
     if (liidlen + 1 > msg->data.ipmmcc.liidalloc) {
         if (liidlen + 1 < 32) {
@@ -366,11 +331,11 @@ openli_export_recv_t *create_ipmmcc_job_from_rtp(uint32_t cin, char *liid,
     memcpy(msg->data.ipmmcc.liid, liid, liidlen);
     msg->data.ipmmcc.liid[liidlen] = '\0';
 
-    if (rtplen > msg->data.ipmmcc.contentalloc) {
-        if (rtplen < 512) {
+    if (contentlen > msg->data.ipmmcc.contentalloc) {
+        if (contentlen < 512) {
             x = 512;
         } else {
-            x = rtplen;
+            x = contentlen;
         }
         msg->data.ipmmcc.content = realloc(msg->data.ipmmcc.content, x);
         msg->data.ipmmcc.contentalloc = x;
@@ -381,10 +346,41 @@ openli_export_recv_t *create_ipmmcc_job_from_rtp(uint32_t cin, char *liid,
         free(msg);
         return NULL;
     }
-    memcpy(msg->data.ipmmcc.content, rtpstart, rtplen);
-    msg->data.ipmmcc.contentlen = rtplen;
+    memcpy(msg->data.ipmmcc.content, content, contentlen);
+    msg->data.ipmmcc.contentlen = contentlen;
     msg->data.ipmmcc.cin = cin;
     msg->data.ipmmcc.dir = dir;
+    return msg;
+}
+
+openli_export_recv_t *create_ipmmcc_job_from_ipv4(uint32_t cin,
+        char *liid, uint32_t destid, uint8_t *ipv4start, uint32_t iplen,
+        uint8_t dir, struct timeval timestamp, uint8_t mmccproto) {
+
+    openli_export_recv_t *msg;
+
+    msg = create_ipmmcc_job_from_generic_content(cin, liid, destid,
+            ipv4start, iplen, dir, &timestamp);
+    if (msg == NULL) {
+        return msg;
+    }
+
+    msg->data.ipmmcc.frametype = OPENLI_IPMMCC_FRAME_TYPE_IP;
+    msg->data.ipmmcc.mmccproto = mmccproto;
+    return msg;
+}
+
+openli_export_recv_t *create_ipmmcc_job_from_rtp(uint32_t cin, char *liid,
+        uint32_t destid, uint8_t *rtpstart, uint32_t rtplen, uint8_t dir,
+        struct timeval timestamp) {
+
+    openli_export_recv_t *msg;
+
+    msg = create_ipmmcc_job_from_generic_content(cin, liid, destid,
+            rtpstart, rtplen, dir, &timestamp);
+    if (msg == NULL) {
+        return msg;
+    }
     msg->data.ipmmcc.frametype = OPENLI_IPMMCC_FRAME_TYPE_RTP;
     msg->data.ipmmcc.mmccproto = OPENLI_IPMMCC_MMCC_PROTOCOL_RTP;
 
@@ -456,26 +452,25 @@ openli_export_recv_t *create_ipmmcc_job_from_packet(uint32_t cin, char *liid,
     return msg;
 }
 
-openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
-        uint32_t destid, libtrace_packet_t *pkt, uint8_t dir) {
+openli_export_recv_t *create_ipcc_job_from_content(uint32_t cin, char *liid,
+        uint32_t destid, uint8_t *content, uint32_t contentlen, uint8_t dir,
+        struct timeval *tv) {
 
-    void *l3;
-    uint32_t rem;
-    uint16_t ethertype;
     openli_export_recv_t *msg = NULL;
-    uint32_t x;
     size_t liidlen = strlen(liid);
+    uint32_t x;
 
     msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
     if (msg == NULL) {
         return msg;
     }
-
-    l3 = trace_get_layer3(pkt, &ethertype, &rem);
-
     msg->type = OPENLI_EXPORT_IPCC;
     msg->destid = destid;
-    msg->ts = trace_get_timeval(pkt);
+    if (tv) {
+        msg->ts = *tv;
+    } else {
+        gettimeofday(&(msg->ts), NULL);
+    }
 
     if (liidlen + 1 > msg->data.ipcc.liidalloc) {
         if (liidlen + 1 < 32) {
@@ -495,11 +490,11 @@ openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
     memcpy(msg->data.ipcc.liid, liid, liidlen);
     msg->data.ipcc.liid[liidlen] = '\0';
 
-    if (rem > msg->data.ipcc.ipcalloc) {
-        if (rem < 512) {
+    if (contentlen > msg->data.ipcc.ipcalloc) {
+        if (contentlen < 512) {
             x = 512;
         } else {
-            x = rem;
+            x = contentlen;
         }
         msg->data.ipcc.ipcontent = realloc(msg->data.ipcc.ipcontent, x);
         msg->data.ipcc.ipcalloc = x;
@@ -510,12 +505,32 @@ openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
         free(msg);
         return NULL;
     }
-    memcpy(msg->data.ipcc.ipcontent, l3, rem);
-    msg->data.ipcc.ipclen = rem;
+    memcpy(msg->data.ipcc.ipcontent, content, contentlen);
+    msg->data.ipcc.ipclen = contentlen;
     msg->data.ipcc.cin = cin;
     msg->data.ipcc.dir = dir;
 
     return msg;
+}
+
+openli_export_recv_t *create_ipcc_job_from_packet(uint32_t cin, char *liid,
+        uint32_t destid, libtrace_packet_t *pkt, uint8_t dir) {
+
+    void *l3;
+    uint32_t rem;
+    uint16_t ethertype;
+    struct timeval tv;
+
+    l3 = trace_get_layer3(pkt, &ethertype, &rem);
+    tv = trace_get_timeval(pkt);
+
+    if (l3 == NULL || rem == 0) {
+        return NULL;
+    }
+
+    return create_ipcc_job_from_content(cin, liid, destid, (uint8_t *)l3,
+            rem, dir, &tv);
+
 }
 
 void copy_location_into_ipmmiri_job(openli_export_recv_t *dest,

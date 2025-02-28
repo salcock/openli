@@ -255,7 +255,11 @@ void free_published_message(openli_export_recv_t *msg);
 openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common,
         openli_intercept_types_t cepttype);
 
-openli_export_recv_t *create_ipcc_job(
+openli_export_recv_t *create_ipcc_job_from_content(uint32_t cin, char *liid,
+        uint32_t destid, uint8_t *content, uint32_t contentlen, uint8_t dir,
+        struct timeval *tv);
+
+openli_export_recv_t *create_ipcc_job_from_packet(
         uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,
         uint8_t dir);
 
@@ -267,8 +271,10 @@ openli_export_recv_t *create_ipmmcc_job_from_rtp(
         uint32_t cin, char *liid, uint32_t destid, uint8_t *rtpstart,
         uint32_t rtplen, uint8_t dir, struct timeval timestamp);
 
-openli_export_recv_t *create_epscc_job_from_ip(uint32_t cin, char *liid,
-        uint32_t destid, libtrace_packet_t *pkt, uint8_t dir);
+openli_export_recv_t *create_ipmmcc_job_from_ipv4(
+        uint32_t cin, char *liid, uint32_t destid, uint8_t *ipv4start,
+        uint32_t iplen, uint8_t dir, struct timeval timestamp,
+        uint8_t mmccproto);
 
 /** Creates a raw IP packet encoding job from a pointer to an IP header.
  *  Supports creating messages using both the OPENLI_EXPORT_RAW_CC type and

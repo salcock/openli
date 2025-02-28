@@ -626,7 +626,7 @@ static void process_gtp_u_packet(openli_gtp_worker_t *worker,
                  */
                 expmsg = create_epscc_job(ipint->common.liid, found->cin,
                         ipint->common.destid, found->dir, payload, plen, 0,
-                        gtpseqno);
+                        gtpseqno, &tv);
             } else {
                 /* XXX don't bother with UMTSCC right now */
                 continue;

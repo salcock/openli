@@ -731,6 +731,112 @@ static int handle_x2_sip_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
     return 1;
 }
 
+static openli_export_recv_t *handle_x3_ipv4_to_ipcc(
+        ipintercept_t *ipint, x2x3_base_header_t *hdr, uint8_t *payload,
+        uint32_t plen, struct timeval *tv) {
+
+    openli_export_recv_t *msg = NULL;
+    msg = create_ipcc_job_from_content(
+            x2x3_correlation_to_cin(hdr->correlation), ipint->common.liid,
+            ipint->common.destid, payload, plen,
+            x2x3dir_to_etsidir(ntohs(hdr->payloaddir)), tv);
+    return msg;
+}
+
+
+static openli_export_recv_t *handle_x3_ipv4_to_mobile(
+        ipintercept_t *ipint, x2x3_base_header_t *hdr, uint8_t *payload,
+        uint32_t plen, struct timeval *tv) {
+
+    openli_export_recv_t *msg = NULL;
+    libtrace_ip_t *ip = (libtrace_ip_t *)payload;
+    uint32_t rem = plen;
+    void *transport, *gtpstart;
+    uint8_t proto;
+    uint8_t *stripped;
+    gtp_header_properties_t props;
+
+    /* Need to strip the IP, UDP and GTP-U headers to generate a suitable
+     * EPSCC record
+     */
+    transport = trace_get_payload_from_ip(ip, &proto, &rem);
+    if (transport == NULL || proto != TRACE_IPPROTO_UDP || rem <=
+            sizeof(libtrace_udp_t)) {
+        return NULL;
+    }
+
+    gtpstart = trace_get_payload_from_udp((libtrace_udp_t *)transport, &rem);
+    if (gtpstart == NULL || rem == 0) {
+        return NULL;
+    }
+
+    if (parse_gtp_header((uint8_t *)gtpstart, rem, &props) <= 0) {
+        return NULL;
+    }
+
+    if (rem <= props.hdrlen) {
+        return NULL;
+    }
+
+    stripped = ((uint8_t *)gtpstart) + props.hdrlen;
+    rem -= props.hdrlen;
+
+    msg = create_epscc_job(ipint->common.liid,
+            x2x3_correlation_to_cin(hdr->correlation), ipint->common.destid,
+            x2x3dir_to_etsidir(ntohs(hdr->payloaddir)), stripped, rem, 0,
+            props.seqno, tv);
+    return msg;
+}
+
+static int handle_x3_ipv4_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
+        uint8_t *payload, uint32_t plen, x2x3_cond_attr_t **cond_attrs) {
+
+    ipintercept_t *ipint;
+    voipintercept_t *vint;
+    struct timeval tv;
+    openli_export_recv_t *msg = NULL;
+    int sqid = 0;
+
+    get_x2x3_pdu_timestamp(&tv, cond_attrs);
+    HASH_FIND(hh_xid, xinp->ipxids, hdr->xid, sizeof(uuid_t), ipint);
+    if (ipint) {
+
+        /* Is this a mobile IP intercept? If yes, then go down the EPS
+         * CC route */
+        if (ipint->accesstype == INTERNET_ACCESS_TYPE_MOBILE) {
+            msg = handle_x3_ipv4_to_mobile(ipint, hdr, payload, plen, &tv);
+        } else {
+            /* Otherwise, we'll assume we're dealing with an IP CC */
+            msg = handle_x3_ipv4_to_ipcc(ipint, hdr, payload, plen, &tv);
+        }
+
+        sqid = ipint->common.seqtrackerid;
+
+    } else {
+        HASH_FIND(hh_xid, xinp->voipxids, hdr->xid, sizeof(uuid_t), vint);
+        if (!vint) {
+            return 0;
+        }
+
+        /* I assume this must be RTP at this point */
+        /* TODO I guess there are other possible types (e.g. MSRP) but how
+         * would we be able to figure that out from here? */
+        msg = create_ipmmcc_job_from_ipv4(
+            x2x3_correlation_to_cin(hdr->correlation),
+            vint->common.liid, vint->common.destid, payload, plen,
+            x2x3dir_to_etsidir(ntohs(hdr->payloaddir)), tv,
+            OPENLI_IPMMCC_MMCC_PROTOCOL_RTP);
+        sqid = vint->common.seqtrackerid;
+
+    }
+    if (!msg) {
+        return 0;
+    }
+    publish_openli_msg(xinp->zmq_pubsocks[sqid], msg);
+
+    return 1;
+}
+
 static int handle_x3_gtpu_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
         uint8_t *payload, uint32_t plen, x2x3_cond_attr_t **cond_attrs) {
 
@@ -764,7 +870,7 @@ static int handle_x3_gtpu_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
     msg = create_epscc_job(ipint->common.liid,
             x2x3_correlation_to_cin(hdr->correlation), ipint->common.destid,
             x2x3dir_to_etsidir(ntohs(hdr->payloaddir)), payload, plen, 0,
-            props.seqno);
+            props.seqno, &tv);
     publish_openli_msg(xinp->zmq_pubsocks[ipint->common.seqtrackerid], msg);
 
     return 1;
@@ -867,12 +973,18 @@ static int handle_x3_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
                 return -1;
             }
             break;
+        case X2X3_PAYLOAD_FORMAT_IPV4_PACKET:
+            if (handle_x3_ipv4_pdu(xinp, hdr, payload, plen, cond_attrs) < 0) {
+                logger(LOG_INFO, "OpenLI: X2/X3 thread %s encountered an error while handling X3-IPv4 PDU from %s", xinp->identifier, clientip);
+                return -1;
+            }
+            break;
+
 
         case X2X3_PAYLOAD_FORMAT_ETSI_102232:
         case X2X3_PAYLOAD_FORMAT_3GPP_33128:
         case X2X3_PAYLOAD_FORMAT_3GPP_33108:
         case X2X3_PAYLOAD_FORMAT_PROPRIETARY:
-        case X2X3_PAYLOAD_FORMAT_IPV4_PACKET:
         case X2X3_PAYLOAD_FORMAT_IPV6_PACKET:
         case X2X3_PAYLOAD_FORMAT_ETHERNET:
         case X2X3_PAYLOAD_FORMAT_MSRP:
