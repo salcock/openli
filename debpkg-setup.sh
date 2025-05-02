@@ -28,7 +28,7 @@ case ${DISTRO} in
         jammy | noble )
                 sed -i 's/ ${libssl:Depends}/ libssl-dev/' debian/control
         ;;
-        default )
+        * )
             sed -i 's/ ${libssl:Depends}/ libssl-dev, liboqs-dev/' debian/control
         ;;
 
