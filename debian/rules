@@ -14,22 +14,14 @@ ENABLE_OQS := $(shell \
     echo no; \
   fi)
 
-ifeq($(ENABLE_OQS),yes)
-	OQS_BUILDDEPS := liboqs-dev
-endif
-
 %:
 	dh $@ --with autoreconf
 
-override_dh_gencontrol:
-	echo "liboqs:Depends=${OQS_BUILDDEPS}" >> debian/substvars
-	dh_gencontrol
-
 override_dh_auto_configure:
-	ifeq ($(ENABLE_OQS),yes)
-		dh_auto_configure -- --sysconfdir=/etc/ --enable-oqs
-	else
-		dh_auto_configure -- --sysconfdir=/etc/
+	if [ "$(ENABLE_OQS)" = "yes" ]; then \
+		dh_auto_configure -- --sysconfdir=/etc/ --enable-oqs; \
+	else \
+		dh_auto_configure -- --sysconfdir=/etc/; \
 	fi
 
 override_dh_install:
