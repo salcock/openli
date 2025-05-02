@@ -3,6 +3,8 @@
 RELEASE_ID := $(shell lsb_release -is)
 RELEASE_VERSION := $(shell lsb_release -rs)
 
+OQS_BUILDDEPS := ""
+
 ENABLE_OQS := $(shell \
   if [ "$(RELEASE_ID)" = "Debian" ] && dpkg --compare-versions "$(RELEASE_VERSION)" gt 12; then \
     echo yes; \
@@ -12,11 +14,16 @@ ENABLE_OQS := $(shell \
     echo no; \
   fi)
 
+ifeq($(ENABLE_OQS),yes)
+	OQS_BUILDDEPS := liboqs-dev
+endif
 
 %:
-
 	dh $@ --with autoreconf
 
+override_dh_gencontrol:
+	echo "liboqs:Depends=${OQS_BUILDDEPS}" >> debian/substvars
+	dh_gencontrol
 
 override_dh_auto_configure:
 	ifeq ($(ENABLE_OQS),yes)
