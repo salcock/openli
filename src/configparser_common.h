@@ -24,18 +24,30 @@
  *
  */
 
-#ifndef OPENLI_CONFIGPARSER_H_
-#define OPENLI_CONFIGPARSER_H_
+#ifndef OPENLI_CONFIGPARSER_COMMON_H_
+#define OPENLI_CONFIGPARSER_COMMON_H_
 
-#include "collector/collector.h"
-#include "provisioner/provisioner.h"
-#include "mediator/mediator.h"
+#include "util.h"
+#include "logger.h"
+#include "agency.h"
+#include "coreserver.h"
+
+#include <string.h>
 #include <yaml.h>
 
-int parse_intercept_config(char *configfile, prov_intercept_conf_t *conf);
-int parse_collector_config(char *configfile, collector_global_t *glob);
-int parse_provisioning_config(char *configfile, provision_state_t *state);
-int parse_mediator_config(char *configfile, mediator_state_t *state);
-#endif
+#define AES_ENCRYPT_ITERATIONS 10000
 
-// vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
+#define SET_CONFIG_STRING_OPTION(optname, yamlval) \
+    if (optname) { \
+        free(optname); \
+    } \
+    optname = strdup((char *)yamlval->data.scalar.value);
+
+int config_yaml_parser(char *configfile, void *arg,
+        int (*parse_mapping)(void *, yaml_document_t *, yaml_node_t *,
+                yaml_node_t *), int createifmissing, const char *encpassfile);
+int config_check_onoff(char *value);
+int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
+        yaml_document_t *doc, yaml_node_t *inputs);
+
+#endif

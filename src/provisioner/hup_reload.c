@@ -25,10 +25,10 @@
  */
 
 #include "config.h"
+#include "configparser_provisioner.h"
 #include "provisioner.h"
 #include "logger.h"
 #include "util.h"
-#include "configparser.h"
 #include "updateserver.h"
 #include "intercept_timers.h"
 
@@ -92,6 +92,10 @@ static inline int common_intercept_equal(intercept_common_t *a,
     }
 
     if (strcmp(a->targetagency, b->targetagency) != 0) {
+        return 0;
+    }
+
+    if (uuid_compare(a->xid, b->xid) != 0) {
         return 0;
     }
 
@@ -669,7 +673,8 @@ static int reload_intercept_config(provision_state_t *currstate,
 
     init_intercept_config(&newconf);
 
-    if (parse_intercept_config(currstate->interceptconffile, &(newconf)) == -1)
+    if (parse_intercept_config(currstate->interceptconffile, &(newconf),
+                currstate->encpassfile) == -1)
     {
         logger(LOG_INFO, "OpenLI provisioner: error while parsing intercept config file '%s'", currstate->interceptconffile);
         return -1;
@@ -992,7 +997,8 @@ int reload_provisioner_config(provision_state_t *currstate) {
     int restauthchanged = 0;
     char *target_info;
 
-    if (init_prov_state(&newstate, currstate->conffile) == -1) {
+    if (init_prov_state(&newstate, currstate->conffile,
+                currstate->encpassfile) == -1) {
         logger(LOG_INFO,
                 "OpenLI: Error reloading config file for provisioner.");
         return -1;

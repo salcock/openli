@@ -327,13 +327,16 @@ static uint8_t apply_invite_cseq_to_call(rtpstreaminf_t *thisrtp,
         // this is the original INVITE, so save the source IP as the
         // inviter
         memcpy(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc, 16);
+        thisrtp->inviterport = irimsg->data.ipmmiri.srcport;
         dir = 0;
     } else if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc,
-                16) == 0) {
+                16) == 0 &&
+            irimsg->data.ipmmiri.srcport == thisrtp->inviterport) {
         // source IP matches the original inviter, so this is client->server
         dir = 0;
     } else if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipdest,
-                16) == 0) {
+                16) == 0 &&
+            irimsg->data.ipmmiri.dstport == thisrtp->inviterport) {
         // this must be server->client
         dir = 1;
     }
@@ -371,9 +374,11 @@ static uint8_t apply_invite_cseq_to_call(rtpstreaminf_t *thisrtp,
      * so if a reverse INVITE from C->B won't be looked at for RTP stream
      * tracking purposes until it is proxied to the B->A link.
      *
-     * There is one edge case where this will still break and I have
-     * no idea how to resolve it: if the proxy is not A->B and B->C,
-     * but instead is A->B and B->A.
+     * There is one edge case where this approach could cause issues
+     * and that is where the proxy is not A->B and B->C, but instead is A->B
+     * and B->A. I think that the addition of port numbers to the "inviter"
+     * definition should resolve this, but I also wouldn't be surprised if
+     * there are further issues down the line.
      */
     if (invitecseq) {
         if (dir != 0xff && thisrtp->invitecseq == NULL) {
@@ -973,9 +978,11 @@ static int process_sip_response(openli_sip_worker_t *sipworker,
         return 0;
     }
 
-    if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc, 16) == 0) {
+    if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc, 16) == 0 &&
+            thisrtp->inviterport == irimsg->data.ipmmiri.srcport) {
         dir = 0;
-    } else if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipdest, 16) == 0) {
+    } else if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipdest, 16) == 0 &&
+            thisrtp->inviterport == irimsg->data.ipmmiri.dstport) {
         dir = 1;
     }
 

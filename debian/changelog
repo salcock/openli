@@ -1,3 +1,24 @@
+openli (1.1.12-1) unstable; urgency=medium
+
+  * Collector: improved handling of situations where a libtrace
+    input encounters a fatal error.
+  * Mediator: ensure rabbitmq-server is listed as a dependency in
+    the mediator system file.
+  * Collector: add support for receiving intercepted traffic via X2/X3
+    interfaces (SIP and RTP PDU types only at this stage).
+  * SIP: fix bug where RTP streams are not intercepted if the corresponding
+    SIP session occurs between two endpoints with the same IP address.
+  * Provisioner: add support for encrypting the running intercept config file.
+  * Mediator: fix bursty delivery of CC records over HI3.
+  * Collector: fix bursty delivery of intercept records to the mediator
+    when publishing to a standard TCP socket.
+  * Collector: fix immediate mediator disconnection when using SSL for
+    inter-component connections.
+  * Collector: fix assertion failure that could occur in very rare instances
+    (believed to be when a SIP message is fragmented at the IP layer).
+
+ -- Shane Alcock <salcock@searchlight.nz>  Thu, 1 May 2025 16:33:50 +1200
+
 openli (1.1.11-1) unstable; urgency=medium
 
   * SIP: fix crash when processing an INVITE where the SDP address is

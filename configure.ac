@@ -1,6 +1,6 @@
 # Super primitive configure script
 
-AC_INIT([openli],[1.1.11],[shane@alcock.co.nz])
+AC_INIT([openli],[1.1.12],[shane@alcock.co.nz])
 
 AM_INIT_AUTOMAKE([subdir-objects])
 AC_CONFIG_SRCDIR(src/collector/collector.c)
@@ -38,7 +38,7 @@ MEDIATOR_LIBS=
 
 PROVISIONER_CFLAGS=
 
-AC_CHECK_LIB([trace], [trace_get_radius],,libtrace_found=0)
+AC_CHECK_LIB([trace], [trace_get_uri_format],,libtrace_found=0)
 AC_CHECK_LIB([yaml], [yaml_document_get_node],,libyaml_found=0)
 AC_CHECK_LIB([zmq], [zmq_poll],libzmq_found=1,libzmq_found=0)
 AC_CHECK_LIB([m], [pow],,libm_found=0)
@@ -48,6 +48,7 @@ AC_CHECK_LIB([crypto], [ERR_load_crypto_strings],libcrypto_found=1,)
 AC_CHECK_LIB([crypto], [EVP_CIPHER_CTX_new],libcrypto_found=1,)
 AC_CHECK_LIB([rabbitmq], [amqp_new_connection],rabbit_found=1,rabbit_found=0)
 AC_CHECK_LIB([Judy], [JudySLGet],,libjudy_found=0)
+AC_CHECK_LIB([uuid], [uuid_parse],,libuuid_found=0)
 
 if test "x$libzmq_found" = "x1"; then
         COLLECTOR_LIBS="$COLLECTOR_LIBS -lzmq"
@@ -131,7 +132,7 @@ if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
 fi
 
 if test "$libtrace_found" = 0; then
-        AC_MSG_ERROR(Required library libtrace 4.0.14 not found; use LDFLAGS to specify library location)
+        AC_MSG_ERROR(Required library libtrace >= 4.0.27 not found; use LDFLAGS to specify library location)
 fi
 
 if test "$libssl_found" != 1 -a "$libssl11_found" != 1; then
@@ -152,6 +153,10 @@ fi
 
 if test "$libjudy_found" = 0; then
         AC_MSG_ERROR(Required library libjudy not found; use LDFLAGS to specify library location)
+fi
+
+if test "$libuuid_found" = 0; then
+        AC_MSG_ERROR(Required library libuuid not found; use LDFLAGS to specify library location)
 fi
 
 if test "$rabbit_found" != 1; then

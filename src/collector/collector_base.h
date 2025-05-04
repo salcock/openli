@@ -136,7 +136,8 @@ typedef struct sync_thread_global {
 
     pthread_mutex_t *stats_mutex;
     collector_stats_t *stats;
-
+    /* ZMQ context for the entire collector process */
+    void *zmq_ctxt;
 } sync_thread_global_t;
 
 enum {
@@ -219,7 +220,6 @@ typedef struct forwarding_thread_data {
     int forwardid;
     int encoders;
     int encoders_over;
-    int colthreads;
 
     void *zmq_ctrlsock;
     void *zmq_pullressock;

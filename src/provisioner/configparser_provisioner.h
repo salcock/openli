@@ -24,35 +24,14 @@
  *
  */
 
-#ifndef OPENLI_ENCODER_WORKER_H_
-#define OPENLI_ENCODER_WORKER_H_
+#ifndef OPENLI_CONFIGPARSER_PROVISIONER_H_
+#define OPENLI_CONFIGPARSER_PROVISIONER_H_
 
-#include <time.h>
-#include <pthread.h>
-#include <libwandder.h>
-#include <Judy.h>
+#include "configparser_common.h"
+#include "provisioner/provisioner.h"
 
-#include "collector_publish.h"
-#include "collector.h"
-#include "netcomms.h"
-#include "etsili_core.h"
-#include "export_shared.h"
-#include "etsiencoding/etsiencoding.h"
-
-
-typedef struct saved_encoding_templates {
-
-    char *key;
-    Pvoid_t headers;
-    Pvoid_t ccpayloads;
-    Pvoid_t iripayloads;
-
-} saved_encoding_templates_t;
-
-void destroy_encoder_worker(openli_encoder_t *enc);
-void *run_encoder_worker(void *encstate);
-
+int parse_provisioning_config(char *configfile, provision_state_t *state);
+int parse_intercept_config(char *configfile, prov_intercept_conf_t *conf,
+        const char *encpassfile);
 #endif
 
-
-// vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
