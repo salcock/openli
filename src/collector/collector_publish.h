@@ -85,6 +85,7 @@ enum {
     OPENLI_EXPORT_EPSCC = 25,
     OPENLI_EXPORT_EPSIRI = 26,
     OPENLI_EXPORT_UDP_SINK_ARGS = 27,
+    OPENLI_EXPORT_STATIC_IPRANGE = 28,
 };
 
 typedef struct openli_ipcc_job {
@@ -239,6 +240,13 @@ typedef struct published_intercept_msg {
     internet_access_method_t accesstype;
 } published_intercept_msg_t;
 
+typedef struct static_iprange_export {
+    char *rangestr;
+    uint32_t cin;
+    char *liid;
+    uint8_t remove_flag;
+} openli_static_iprange_t;
+
 typedef struct provisioner_msg {
     uint8_t msgtype;
     uint8_t *msgbody;
@@ -266,6 +274,7 @@ struct openli_export_recv {
         openli_emailiri_job_t emailiri;
         openli_emailcc_job_t emailcc;
         udp_sink_worker_args_t udpargs;
+        openli_static_iprange_t staticip;
     	halt_info_t *haltinfo;
     } data;
 };

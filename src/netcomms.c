@@ -1346,15 +1346,15 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
         }
     }
 
-    HASH_ITER(hh, ipint->udp_sinks, sink, tmpsink) {
-        if (push_intercept_udp_sink_onto_net_buffer(nb, &(ipint->common),
-                sink) < 0) {
+    HASH_ITER(hh, ipint->statics, ipr, tmpr) {
+        if (push_static_ipranges_onto_net_buffer(nb, ipint, ipr) < 0) {
             return -1;
         }
     }
 
-    HASH_ITER(hh, ipint->statics, ipr, tmpr) {
-        if (push_static_ipranges_onto_net_buffer(nb, ipint, ipr) < 0) {
+    HASH_ITER(hh, ipint->udp_sinks, sink, tmpsink) {
+        if (push_intercept_udp_sink_onto_net_buffer(nb, &(ipint->common),
+                sink) < 0) {
             return -1;
         }
     }

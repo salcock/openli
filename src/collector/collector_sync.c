@@ -398,6 +398,22 @@ static void halt_udp_sink_thread(colsync_udp_sink_t *sink) {
     sink->tid = 0;
 }
 
+static void push_static_iprange_to_udpsink(void *zmq_control,
+        static_ipranges_t *ipr) {
+
+    openli_export_recv_t *msg;
+
+    msg = calloc(1, sizeof(openli_export_recv_t));
+    msg->type = OPENLI_EXPORT_STATIC_IPRANGE;
+    msg->destid = 0;                        // not required
+    msg->data.staticip.rangestr = strdup(ipr->rangestr);
+    msg->data.staticip.cin = ipr->cin;
+    msg->data.staticip.liid = NULL;         // not required
+    msg->data.staticip.remove_flag = 0;
+    publish_openli_msg(zmq_control, msg);
+}
+
+
 static int create_udp_sink_thread(collector_sync_t *sync,
         colsync_udp_sink_t *sink, intercept_udp_sink_t *config) {
 
@@ -407,6 +423,7 @@ static int create_udp_sink_thread(collector_sync_t *sync,
     int hwm = 1000, timeout=1000;
     struct timeval tv;
     openli_export_recv_t *msg;
+    static_ipranges_t *ipr, *iprtmp;
 
     HASH_FIND(hh_liid, sync->ipintercepts, config->liid, strlen(config->liid),
             ipint);
@@ -469,6 +486,10 @@ static int create_udp_sink_thread(collector_sync_t *sync,
 
     pthread_create(&(sink->tid), NULL, start_udp_sink_worker, (void *)args);
     pthread_detach(sink->tid);
+
+    HASH_ITER(hh, ipint->statics, ipr, iprtmp) {
+        push_static_iprange_to_udpsink(sink->zmq_control, ipr);
+    }
 
     gettimeofday(&tv, NULL);
     if (tv.tv_sec >= ipint->common.tostart_time &&
@@ -799,7 +820,6 @@ static void generate_startend_ipiris(collector_sync_t *sync,
     }
 
 }
-
 
 static inline void push_static_iprange_to_collectors(
         libtrace_message_queue_t *q, ipintercept_t *ipint,
@@ -1183,6 +1203,7 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
     ipintercept_t *ipint;
     sync_sendq_t *tmp, *sendq;
 	struct timeval now;
+    colsync_udp_sink_t *sink, *tmpsink;
 
     ipr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
 
@@ -1240,6 +1261,16 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
         push_static_iprange_to_collectors(sendq->q, ipint, ipr);
     }
 
+    pthread_mutex_lock(&(sync->glob->mutex));
+    HASH_ITER(hh, sync->glob->udpsinks, sink, tmpsink) {
+        if (sink->attached_liid == NULL) {
+            continue;
+        }
+        if (strcmp(sink->attached_liid, ipint->common.liid) == 0) {
+            push_static_iprange_to_udpsink(sink->zmq_control, ipr);
+        }
+    }
+    pthread_mutex_unlock(&(sync->glob->mutex));
     return 1;
 }
 

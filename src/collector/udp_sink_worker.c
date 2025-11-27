@@ -517,6 +517,10 @@ static int process_control_message(udp_sink_local_t *local, char *key) {
             free_published_message(msg);
             return -1;
 
+        } else if (msg->type == OPENLI_EXPORT_STATIC_IPRANGE) {
+            fprintf(stderr, "STATIC IP: %s %u\n", msg->data.staticip.rangestr,
+                    msg->data.staticip.cin);
+            free_published_message(msg);
         } else {
             // not a message we care about
             free_published_message(msg);

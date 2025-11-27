@@ -214,6 +214,13 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.udpargs.sourcehost) {
             free(msg->data.udpargs.sourcehost);
         }
+    } else if (msg->type == OPENLI_EXPORT_STATIC_IPRANGE) {
+        if (msg->data.staticip.rangestr) {
+            free(msg->data.staticip.rangestr);
+        }
+        if (msg->data.staticip.liid) {
+            free(msg->data.staticip.liid);
+        }
     }
 
     free(msg);
