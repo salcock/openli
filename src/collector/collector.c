@@ -1123,9 +1123,9 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         in4 = (struct sockaddr_in *)(&(pinfo.destip));
         in4->sin_addr = ipheader->ip_dst;
 
-	offset = ntohs(ipheader->ip_off);
-	/* fast check for IP fragmentation */
-	if ((offset & 0x2000) || (offset & 0x1FFF)) {
+        offset = ntohs(ipheader->ip_off);
+        /* fast check for IP fragmentation */
+        if ((offset & 0x2000) || (offset & 0x1FFF)) {
             fragoff = trace_get_fragment_offset(pkt, &moreflag);
             ipstream = get_ipfrag_reassemble_stream(loc->fragreass, pkt);
             if (!ipstream) {
@@ -1155,6 +1155,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             } else {
                 proto = ipheader->ip_p;
             }
+            pinfo.trans_proto = proto;
 
         } else {
             uint8_t *postip = ((uint8_t *)l3) + ipheader->ip_hl * 4;
@@ -1162,6 +1163,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             pinfo.srcport = ntohs(*((uint16_t *)postip));
             pinfo.destport = ntohs(*((uint16_t *)(postip + 2)));
             proto = ipheader->ip_p;
+            pinfo.trans_proto = proto;
         }
         pinfo.family = AF_INET;
     } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
@@ -1174,6 +1176,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         pinfo.destport = ntohs(*((uint16_t *)(postip6 + 2)));
         proto = ip6header->nxt;
         pinfo.family = AF_INET6;
+        pinfo.trans_proto = proto;
 
         in6 = (struct sockaddr_in6 *)(&(pinfo.srcip));
         in6->sin6_addr = ip6header->ip_src;
@@ -1184,6 +1187,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         pinfo.destport = 0;
         proto = 0;
         pinfo.family = 0;
+        pinfo.trans_proto = proto;
     }
 
     if (fast_coreserver_check(loc, &pinfo) == 0) {
