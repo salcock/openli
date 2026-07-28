@@ -610,6 +610,8 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             key, value, "email worker", 0)) return 0;
     if (parse_col_thread_count(&(glob->gtp_threads), "gtpthreads",
             key, value, "GTP worker", 0)) return 0;
+    if (parse_col_thread_count(&(glob->sctp_threads), "sctpthreads",
+            key, value, "SCTP worker", 0)) return 0;
     if (parse_col_thread_count(&(glob->sip_threads), "smsthreads",
             key, value, "SIP worker", 1)) return 0;
     if (parse_col_thread_count(&(glob->sip_threads), "sipthreads",

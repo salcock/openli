@@ -575,7 +575,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
         for (i = 0; i < glob->gtp_threads; i++) {
             char pubsockname[128];
 
-            snprintf(pubsockname, 128, "inproc://openligtpworker-colrecv%d", i);
+            snprintf(pubsockname, 128, "inproc://openliGTPworker-colrecv%d", i);
             loc->gtp_worker_queues[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
             zmq_setsockopt(loc->gtp_worker_queues[i], ZMQ_SNDHWM, &hwm,
                     sizeof(hwm));
@@ -590,6 +590,23 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
         loc->fromgtp_queues = NULL;
         loc->gtp_worker_queues = NULL;
     }
+
+    if (glob->sctp_threads > 0) {
+        loc->sctp_worker_queues = calloc(glob->sctp_threads, sizeof(void *));
+        for (i = 0; i < glob->sctp_threads; i++) {
+            char pubsockname[128];
+
+            snprintf(pubsockname, 128, "inproc://openliSCTPworker-colrecv%d",
+                    i);
+            loc->sctp_worker_queues[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+            zmq_setsockopt(loc->sctp_worker_queues[i], ZMQ_SNDHWM, &hwm,
+                    sizeof(hwm));
+            zmq_connect(loc->sctp_worker_queues[i], pubsockname);
+        }
+    } else {
+        loc->sctp_worker_queues = NULL;
+    }
+
 
     loc->fragreass = create_new_ipfrag_reassembler();
 
@@ -636,7 +653,7 @@ static void *start_processing_thread(libtrace_t *trace,
     }
 
     for (i = 0; i < glob->gtp_threads; i++) {
-        snprintf(returnq, 256, "inproc://gtp-packet-return-%d", i);
+        snprintf(returnq, 256, "inproc://GTP-packet-return-%d", i);
         if (zmq_connect(loc->zmq_packet_return, returnq) < 0) {
             logger(LOG_INFO, "OpenLI collector: packet processing thread %s failed to bind to ZMQ for packet object returns from GTP worker %d: %s",
                     loc->localname, i, strerror(errno));
@@ -647,6 +664,14 @@ static void *start_processing_thread(libtrace_t *trace,
         snprintf(returnq, 256, "inproc://email-packet-return-%d", i);
         if (zmq_connect(loc->zmq_packet_return, returnq) < 0) {
             logger(LOG_INFO, "OpenLI collector: packet processing thread %s failed to bind to ZMQ for packet object returns from email worker %d: %s",
+                    loc->localname, i, strerror(errno));
+        }
+    }
+
+    for (i = 0; i < glob->sctp_threads; i++) {
+        snprintf(returnq, 256, "inproc://SCTP-packet-return-%d", i);
+        if (zmq_connect(loc->zmq_packet_return, returnq) < 0) {
+            logger(LOG_INFO, "OpenLI collector: packet processing thread %s failed to bind to ZMQ for packet object returns from SCTP worker %d: %s",
                     loc->localname, i, strerror(errno));
         }
     }
@@ -761,6 +786,12 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
         zmq_close(loc->email_worker_queues[i]);
     }
 
+    for (i = 0; i < glob->sctp_threads; i++) {
+        zmq_setsockopt(loc->sctp_worker_queues[i], ZMQ_LINGER, &zero,
+                sizeof(zero));
+        zmq_close(loc->sctp_worker_queues[i]);
+    }
+
     for (i = 0; i < glob->gtp_threads; i++) {
         openli_gtp_worker_t *worker;
 
@@ -813,6 +844,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
         libtrace_message_queue_destroy(&(loc->fromsip_queues[i]));
     }
 
+
     zmq_setsockopt(loc->tosyncq_ip, ZMQ_LINGER, &zero, sizeof(zero));
     zmq_close(loc->tosyncq_ip);
 
@@ -831,6 +863,9 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
     }
     if (loc->sip_worker_queues) {
         free(loc->sip_worker_queues);
+    }
+    if (loc->sctp_worker_queues) {
+        free(loc->sctp_worker_queues);
     }
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
@@ -2018,6 +2053,10 @@ static void destroy_collector_state(collector_global_t *glob) {
         free(glob->emailworkers);
     }
 
+    if (glob->sctpworkers) {
+        free(glob->sctpworkers);
+    }
+
     if (glob->gtpworkers) {
         for (i = 0; i < glob->gtp_threads; i++) {
             pthread_mutex_destroy(&(glob->gtpworkers[i].col_queue_mutex));
@@ -2294,6 +2333,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->forwarding_threads = 1;
     glob->encoding_threads = 2;
     glob->email_threads = 1;
+    glob->sctp_threads = 1;
     glob->gtp_threads = 1;
     glob->sip_threads = 1;
     glob->sharedinfo.jsonconfig = NULL;
@@ -3193,6 +3233,18 @@ int main(int argc, char *argv[]) {
         glob->gtpworkers = NULL;
     }
 
+    if (glob->sctp_threads > 0) {
+        glob->sctpworkers = calloc(glob->sctp_threads,
+                sizeof(openli_sctp_worker_t));
+
+        for (i = 0; i < glob->sctp_threads; i++) {
+            start_sctp_worker_thread(&(glob->sctpworkers[i]), i, glob);
+        }
+    } else {
+        glob->sctpworkers = NULL;
+    }
+
+
     if (glob->email_threads > 0) {
 
         glob->emailworkers = calloc(glob->email_threads,
@@ -3435,6 +3487,9 @@ int main(int argc, char *argv[]) {
     }
     for (i = 0; i < glob->gtp_threads; i++) {
         pthread_join(glob->gtpworkers[i].threadid, NULL);
+    }
+    for (i = 0; i < glob->sctp_threads; i++) {
+        pthread_join(glob->sctpworkers[i].threadid, NULL);
     }
     for (i = 0; i < glob->sip_threads; i++) {
         pthread_join(glob->sipworkers[i].threadid, NULL);

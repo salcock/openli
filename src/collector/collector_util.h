@@ -34,6 +34,12 @@ int init_zmq_socket_array(void **zmq_socks, int sockcount,
 void clear_zmq_socket_array(void **zmq_socks, int sockcount);
 int send_halt_message_to_zmq_socket_array(void **zmq_socks, int sockcount,
 		halt_info_t *haltinfo);
+void *init_zmq_colthread_recv_consumer(void *zmq_ctxt, const char *label,
+        const int workerid);
+void *init_zmq_ii_consumer(void *zmq_ctxt, const char *label,
+        const int workerid);
+void *init_zmq_packet_return_publish(void *zmq_ctxt, const char *label,
+        const int workerid);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

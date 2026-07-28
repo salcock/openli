@@ -92,6 +92,7 @@ openlicollector_SOURCES=collector/collector.c \
                 collector/sip_worker.c collector/sip_worker.h \
 				collector/sip_update_state.c \
                 collector/gtp_worker.c collector/gtp_worker.h \
+                collector/sctp_worker.c collector/sctp_worker.h \
 				collector/gtp.h collector/sms_masking.c \
                 collector/location.c collector/location.h \
                 collector/collector_util.c collector/collector_util.h \

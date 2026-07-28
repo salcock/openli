@@ -498,6 +498,31 @@ typedef struct encoder_state {
     uint8_t halted;
 } openli_encoder_t;
 
+typedef struct sctp_thread_state {
+
+    void *zmq_ctxt;
+    const char *worker_threadname;
+    int workerid;
+    int tracker_threads;
+    pthread_t threadid;
+
+    void *zmq_ii_sock;
+    void **zmq_pubsocks;
+    void *zmq_colthread_recvsock;
+
+    voipintercept_t *voipintercepts;
+
+    /* Shared state used to track how many worker threads have halted */
+    halt_info_t *haltinfo;
+
+    // TODO transaction ID map
+
+    // TODO identity cache map
+
+    void *zmq_packet_return;
+
+} openli_sctp_worker_t;
+
 void destroy_encoder_worker(openli_encoder_t *enc);
 void *run_encoder_worker(void *encstate);
 

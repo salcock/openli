@@ -55,6 +55,7 @@
 #include "email_worker.h"
 #include "gtp_worker.h"
 #include "sip_worker.h"
+#include "sctp_worker.h"
 #include "sipparsing.h"
 #include "x2x3_ingest.h"
 
@@ -89,6 +90,7 @@ enum {
     OPENLI_UPDATE_IMAP = 6,
     OPENLI_UPDATE_POP3 = 7,
     OPENLI_UPDATE_SMS_SIP = 8,
+    OPENLI_UPDATE_SCTP = 9,
 };
 
 typedef struct openli_sip_content {
@@ -249,6 +251,9 @@ typedef struct colthread_local {
     /* Array of message queues to pass packets to the GTP worker threads */
     void **gtp_worker_queues;
 
+    /* Array of message queues to pass packets to the SCTP worker threads */
+    void **sctp_worker_queues;
+
     /* Current intercepts */
     ipv4_target_t *activeipv4intercepts;
     ipv6_target_t *activeipv6intercepts;
@@ -327,6 +332,7 @@ struct collector_global {
     int email_threads;
     int gtp_threads;
     int sip_threads;
+    int sctp_threads;
 
     void *zmq_encoder_ctrl;
 
@@ -347,6 +353,8 @@ struct collector_global {
     openli_email_worker_t *emailworkers;
     openli_gtp_worker_t *gtpworkers;
     openli_sip_worker_t *sipworkers;
+    openli_sctp_worker_t *sctpworkers;
+
     colthread_local_t *collocals;
     int nextloc;
 
