@@ -90,7 +90,7 @@ enum {
     OPENLI_UPDATE_IMAP = 6,
     OPENLI_UPDATE_POP3 = 7,
     OPENLI_UPDATE_SMS_SIP = 8,
-    OPENLI_UPDATE_SCTP = 9,
+    OPENLI_UPDATE_SCCP = 9,
 };
 
 typedef struct openli_sip_content {
@@ -101,6 +101,12 @@ typedef struct openli_sip_content {
     int ipfamily;
     struct timeval timestamp;
 } PACKED openli_sip_content_t;
+
+typedef struct openli_sccp_content {
+    uint8_t *content;
+    uint16_t contentlen;
+    struct timeval timestamp;
+} PACKED openli_sccp_content_t;
 
 #define RECVD_PKT recvd.data.packet.lt_pkt
 #define RECVD_PINFO recvd.data.packet.pinfo
@@ -114,6 +120,7 @@ typedef struct openli_state_msg {
             libtrace_packet_t *lt_pkt;
             packet_info_t pinfo;
         } packet;
+        openli_sccp_content_t sccp;
         openli_sip_content_t sip;
     } data;
 
@@ -241,6 +248,9 @@ typedef struct colthread_local {
 
     /* Number of SIP processing threads that have queues in the above array */
     int sipq_count;
+
+    /* Number of SCTP processing threads */
+    int sctpq_count;
 
     /* Array of message queues to pass packets to the email worker threads */
     void **email_worker_queues;

@@ -33,4 +33,11 @@
 void start_sctp_worker_thread(openli_sctp_worker_t *sctp, int workerid,
         void *globalstate);
 
+uint8_t *parse_m2pa_header_for_sccp(uint8_t *m2pa, uint16_t len,
+        uint16_t *sccp_len, uint32_t *opc, uint32_t *dpc);
+uint8_t *parse_m3ua_header_for_sccp(uint8_t *m3ua, uint16_t len,
+        uint16_t *sccp_len, uint32_t *opc, uint32_t *dpc);
+uint8_t *parse_sccp_for_tcap_tids(uint8_t *sccp, uint16_t len,
+        uint16_t *tcap_len, uint32_t *otid, uint32_t *dtid);
+
 #endif

@@ -30,6 +30,7 @@
 #include <libtrace.h>
 #include <sys/timerfd.h>
 #include <assert.h>
+#include <libwandder.h>
 
 #include "collector.h"
 #include "logger.h"
@@ -37,7 +38,197 @@
 #include "intercept.h"
 #include "netcomms.h"
 
+struct m3ua_layer {
+    uint8_t version;
+    uint8_t reserved; 
+    uint8_t class;
+    uint8_t type;
+    uint32_t length;
+} PACKED;
+
+struct m2pa_layer {
+    uint8_t version;
+    uint8_t spare;
+    uint8_t class;
+    uint8_t type;
+    uint32_t length;
+    uint8_t bsn_spare;
+    uint8_t bsn[3];
+    uint8_t fsn_spare; 
+    uint8_t fsn[3];
+    uint8_t priority;
+} PACKED;
+
+
 void *sctp_thread_begin(void *arg);
+
+uint8_t *parse_sccp_for_tcap_tids(uint8_t *sccp, uint16_t len,
+        uint16_t *tcap_len, uint32_t *otid, uint32_t *dtid) {
+    size_t data_offset, i;
+    uint8_t *tcap, *itemptr;
+    wandder_decoder_t *dec = NULL;
+    uint32_t ident, length, val;
+    uint8_t is_gsm = 0;
+
+    if (sccp == NULL || len < 5) {
+        return NULL;
+    }
+
+    if ((*sccp) == 0x09) {
+        // UDT (unitdata)
+        data_offset = 5 + sccp[4];
+    } else if ((*sccp) == 0x11) {
+        data_offset = 6 + sccp[5];
+    } else {
+        return NULL;
+    }
+
+    if (data_offset >= len) {
+        return NULL;
+    }
+
+    tcap = sccp + data_offset;
+    len -= data_offset;
+    *otid = 0;
+    *dtid = 0;
+    *tcap_len = len;
+
+    dec = init_wandder_decoder(dec, tcap, len, false);
+    if (wandder_decode_next(dec) <= 0) {
+        free_wandder_decoder(dec);
+        return NULL;
+    }
+
+    while (wandder_decode_next(dec) > 0) {
+        ident = wandder_get_identifier(dec);
+        length = wandder_get_itemlen(dec);
+        itemptr = wandder_get_itemptr(dec);
+
+        if (ident == 8) {
+            val = 0;
+            for (i = 0; i < length && i < 4; i++) {
+                val = (val << 8) | *(itemptr + i);
+            }
+            *otid = val;
+        } else if (ident == 9) {
+            val = 0;
+            for (i = 0; i < length && i < 4; i++) {
+                val = (val << 8) | *(itemptr + i);
+            }
+            *dtid = val;
+        } else if (ident == 12) {
+            is_gsm = 1;
+        } else {
+            wandder_decode_skip(dec);
+        }
+    }
+
+    free_wandder_decoder(dec);
+    if (is_gsm) {
+        return tcap;
+    }
+
+    // not a packet that is relevant to SIGTRAN interception
+    return NULL;
+}
+
+uint8_t *parse_m3ua_header_for_sccp(uint8_t *m3ua, uint16_t len,
+        uint16_t *sccp_len, uint32_t *opc, uint32_t *dpc) {
+
+    struct m3ua_layer *hdr = (struct m3ua_layer *)m3ua;
+    uint32_t newlen;
+    uint16_t offset = 0, *ptr;
+    uint16_t tag, tvlen;
+    uint8_t *si, *sccp;
+
+    if (hdr == NULL || len < sizeof(struct m3ua_layer)) {
+        return NULL;
+    }
+
+    if (hdr->version != 1 || hdr->class != 1 || hdr->type != 1) {
+        return NULL;
+    }
+
+    newlen = ntohl(hdr->length);
+    if (newlen < len) {
+        len = newlen;
+    }
+
+
+    offset = sizeof(struct m3ua_layer);
+    sccp = NULL;
+    *sccp_len = 0;
+
+    while (offset < len - 4) {
+        ptr = (uint16_t *)(m3ua + offset);
+        tag = ntohs(*ptr);
+        ptr++;
+        tvlen = ntohs(*ptr);
+        ptr++;
+
+        if (tag == 0x0210) {
+            if (tvlen < 16) {
+                break;
+            }
+            *opc = ntohl(*((uint32_t *)ptr));
+            *dpc = ntohl(*((uint32_t *)(ptr + 2))); // offset is 4 bytes
+            si = (uint8_t *)(ptr + 4);         // offset is 8 bytes
+            if (*si == 3) {
+                sccp = (uint8_t *)(ptr + 6);
+                *sccp_len = tvlen - 16;
+            }
+            break;
+        }
+        // maintain 4 byte alignment
+        offset += ((tvlen + 3) & ~3);
+    }
+    return sccp;
+}
+
+uint8_t *parse_m2pa_header_for_sccp(uint8_t *m2pa, uint16_t len,
+        uint16_t *sccp_len, uint32_t *opc, uint32_t *dpc) {
+
+    struct m2pa_layer *hdr = (struct m2pa_layer *)m2pa;
+    uint32_t newlen;
+    uint16_t offset;
+    uint8_t si;
+    uint8_t *sccp;
+    uint32_t routelabel;
+
+    if (hdr == NULL || len < sizeof(struct m2pa_layer)) {
+        return NULL;
+    }
+
+    if (hdr->version != 1 || hdr->class != 0x0b || hdr->type != 1) {
+        return NULL;
+    }
+
+    newlen = ntohl(hdr->length);
+    if (newlen < len) {
+        len = newlen;
+    }
+
+    offset = sizeof(struct m2pa_layer);
+    if (len - offset < 5) {
+        return NULL;
+    }
+
+    si = (*(m2pa + offset)) & 0x0F;
+    routelabel = *((uint32_t *)(m2pa + offset + 1));
+
+    *opc = (routelabel & 0x0FFFC000) >> 14;
+    *dpc = routelabel & 0x00003FFF;
+
+    offset += 5;
+    if (si == 3) {
+        sccp = m2pa + offset;
+        *sccp_len = len - offset;
+    } else {
+        *sccp_len = 0;
+        sccp = NULL;
+    }
+    return sccp;
+}
 
 void start_sctp_worker_thread(openli_sctp_worker_t *sctp, int workerid,
         void *globalstate) {
@@ -158,25 +349,18 @@ static int sctp_worker_process_packet(openli_sctp_worker_t *sctp) {
             return -1;
         }
 
-        if (recvd.type != OPENLI_UPDATE_SCTP) {
+        if (recvd.type != OPENLI_UPDATE_SCCP) {
             logger(LOG_INFO,
                     "OpenLI: SCTP worker thread %d received unexpected update type %u",
                     sctp->workerid, recvd.type);
             break;
         }
 
-        // process_sctp_packet(sctp, RECVD_PKT, RECVD_PINFO);
-
-        if (RECVD_PKT) {
-            if (sctp->zmq_packet_return) {
-                if (zmq_send(sctp->zmq_packet_return, &RECVD_PKT,
-                            sizeof(RECVD_PKT), ZMQ_DONTWAIT) < 0) {
-                    trace_destroy_packet(RECVD_PKT);
-                }
-            } else {
-                trace_destroy_packet(RECVD_PKT);
-            }
+        // process_sccp_content(sctp, &(recvd.data.sccp));
+        if (recvd.data.sccp.content) {
+            free(recvd.data.sccp.content);
         }
+
     } while (rc > 0);
 
     return 0;

@@ -193,6 +193,11 @@ static void free_coreserver_fast_filters(colthread_local_t *loc) {
 static int fast_coreserver_check(colthread_local_t *loc, packet_info_t *pinfo) {
     coreserver_fast_filter_v4_t *fast;
 
+    if (pinfo->trans_proto != TRACE_IPPROTO_UDP &&
+            pinfo->trans_proto != TRACE_IPPROTO_TCP) {
+        return 1;
+    }
+
     if (pinfo->family == AF_INET) {
         struct sockaddr_in *sa;
         sa = (struct sockaddr_in *)(&(pinfo->destip));
@@ -603,8 +608,10 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
                     sizeof(hwm));
             zmq_connect(loc->sctp_worker_queues[i], pubsockname);
         }
+        loc->sctpq_count = glob->sctp_threads;
     } else {
         loc->sctp_worker_queues = NULL;
+        loc->sctpq_count = 0;
     }
 
 
@@ -1115,6 +1122,71 @@ static inline uint32_t is_core_server_packet(
 
 }
 
+static void handle_sctp_data_chunks(colthread_local_t *loc,
+        libtrace_packet_t *pkt) {
+
+    libtrace_sctp_common_t *sctp;
+    uint32_t rem;
+    uint8_t proto, flags, *dchunk = NULL;
+    uint16_t len;
+    libtrace_sctp_data_t *dhdr;
+    libtrace_sctp_state_t state;
+    uint8_t *sccp;
+    uint16_t sccp_len = 0;
+    uint32_t opc, dpc, tohash, fwdto;
+    openli_state_update_t sccpmsg;
+
+    memset(&state, 0, sizeof(state));
+
+    if (loc->sctpq_count == 0) {
+        return;
+    }
+
+    sctp = (libtrace_sctp_common_t *)trace_get_transport(pkt, &proto, &rem);
+    if (!sctp || rem == 0) {
+        return;
+    }
+
+    while (1) {
+        dchunk = trace_get_next_sctp_data_chunk(sctp, &state, rem, &flags,
+                &len, &dhdr);
+        if (dchunk == NULL) {
+            break;
+        }
+        sccp = NULL;
+        sccp_len = 0;
+
+        if (ntohl(dhdr->proto) == 3) {
+            sccp = parse_m3ua_header_for_sccp(dchunk, len, &sccp_len,
+                    &opc, &dpc);
+        } else if (ntohl(dhdr->proto) == 5) {
+            sccp = parse_m2pa_header_for_sccp(dchunk, len, &sccp_len,
+                    &opc, &dpc);
+        }
+
+        if (!sccp) {
+            continue;
+        }
+
+        tohash = opc ^ dpc;
+        fwdto = hashlittle(&tohash, sizeof(tohash), 312267023) %
+                loc->sctpq_count;
+
+        if (collector_halt) {
+            return;
+        }
+        sccpmsg.type = OPENLI_UPDATE_SCCP;
+        sccpmsg.data.sccp.content = calloc(sccp_len, sizeof(uint8_t));
+        memcpy(sccpmsg.data.sccp.content, sccp, sccp_len);
+        sccpmsg.data.sccp.contentlen = sccp_len;
+        sccpmsg.data.sccp.timestamp = trace_get_timeval(pkt);
+
+        zmq_send(loc->sctp_worker_queues[fwdto], (void *)&(sccpmsg),
+                sizeof(sccpmsg), 0);
+    }
+
+}
+
 static uint8_t check_if_gtp(packet_info_t *pinfo, libtrace_packet_t *pkt,
         colthread_local_t *loc, collector_global_t *glob) {
 
@@ -1367,9 +1439,12 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         goto skipcoreservers;
     }
 
+    if (proto == TRACE_IPPROTO_SCTP) {
+        handle_sctp_data_chunks(loc, pkt);
+    }
     /* All these special packets are UDP, so we can avoid a whole bunch
      * of these checks for TCP traffic */
-    if (proto == TRACE_IPPROTO_UDP) {
+    else if (proto == TRACE_IPPROTO_UDP) {
 
         /* Is this from one of our ALU mirrors -- if yes, parse + strip it
          * for conversion to an ETSI record */
