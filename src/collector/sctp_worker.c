@@ -245,6 +245,7 @@ void start_sctp_worker_thread(openli_sctp_worker_t *sctp, int workerid,
     sctp->zmq_pubsocks = NULL;
     sctp->zmq_colthread_recvsock = NULL;
     sctp->tracker_threads = glob->seqtracker_threads;
+    sctp->sip_worker_threads = glob->sip_threads;
     sctp->voipintercepts = NULL;
     sctp->worker_threadname = strdup(name);
     sctp->haltinfo = NULL;
@@ -254,31 +255,270 @@ void start_sctp_worker_thread(openli_sctp_worker_t *sctp, int workerid,
 
 }
 
+static void sctp_worker_init_voip_intercept(openli_sctp_worker_t *sctp,
+        voipintercept_t *vint) {
+    openli_export_recv_t *expmsg;
+
+    if (sctp->tracker_threads <= 1) {
+        vint->common.seqtrackerid = 0;
+    } else {
+        vint->common.seqtrackerid = hash_liid(vint->common.liid) %
+                sctp->tracker_threads;
+    }
+
+    HASH_ADD_KEYPTR(hh_liid, sctp->voipintercepts, vint->common.liid,
+            vint->common.liid_len, vint);
+    vint->awaitingconfirm = 0;
+
+    if (sctp->sip_worker_threads == 0 && sctp->workerid == 0) {
+        // Normally a SIP worker would announce the intercept to the
+        // seqtracker, but if there are none configured then we'll
+        // need to do it ourselves
+        expmsg = create_intercept_details_msg(&(vint->common),
+                OPENLI_INTERCEPT_TYPE_VOIP);
+        expmsg->type = OPENLI_EXPORT_INTERCEPT_DETAILS;
+        publish_openli_msg(sctp->zmq_pubsocks[vint->common.seqtrackerid],
+                expmsg);
+    }
+}
+
+static void sctp_worker_update_modified_voip_intercept(
+        openli_sctp_worker_t *sctp, voipintercept_t *found,
+        voipintercept_t *decoded) {
+
+    int changed = 0, encodingchanged = 0;
+
+    encodingchanged = update_modified_intercept_common(&(found->common),
+            &(decoded->common), OPENLI_INTERCEPT_TYPE_VOIP, &changed);
+
+    if (encodingchanged < 0) {
+        goto endupdatevint;
+    }
+
+    if (found->options != decoded->options) {
+        found->options = decoded->options;
+        changed = 1;
+    }
+
+    if ((encodingchanged || changed) && sctp->sip_worker_threads == 0 &&
+            sctp->workerid == 0) {
+        openli_export_recv_t *expmsg;
+        expmsg = create_intercept_details_msg(&(found->common),
+                OPENLI_INTERCEPT_TYPE_VOIP);
+        expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
+        publish_openli_msg(sctp->zmq_pubsocks[found->common.seqtrackerid],
+                expmsg);
+    }
+
+endupdatevint:
+    free_single_voipintercept(decoded);
+}
+
+static int add_new_sigtran_intercept(openli_sctp_worker_t *sctp,
+        provisioner_msg_t *msg) {
+
+    voipintercept_t *vint, *found;
+    int ret = 0;
+
+    vint = calloc(1, sizeof(voipintercept_t));
+    if (decode_voipintercept_start(msg->msgbody, msg->msglen, vint) < 0) {
+        logger(LOG_INFO, "OpenLI: SCTP worker failed to decode VoIP intercept start message from provisioner");
+        free(vint);
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, sctp->voipintercepts, vint->common.liid,
+            vint->common.liid_len, found);
+    if (found) {
+        openli_sip_identity_t *tgt;
+        libtrace_list_node_t *n;
+
+        n = found->targets->head;
+        while (n) {
+            tgt = *((openli_sip_identity_t **)(n->data));
+            tgt->awaitingconfirm = 1;
+            n = n->next;
+        }
+        sctp_worker_update_modified_voip_intercept(sctp, found, vint);
+        found->awaitingconfirm = 0;
+        found->active = 1;
+        ret = 0;
+    } else {
+        sctp_worker_init_voip_intercept(sctp, vint);
+        found = vint;
+        ret = 1;
+    }
+
+    return ret;
+}
+
+static int modify_sigtran_intercept(openli_sctp_worker_t *sctp,
+        provisioner_msg_t *provmsg) {
+
+    voipintercept_t *vint, *found;
+
+    vint = calloc(1, sizeof(voipintercept_t));
+    if (decode_voipintercept_modify(provmsg->msgbody, provmsg->msglen,
+            vint) < 0) {
+        logger(LOG_INFO, "OpenLI: SCTP worker failed to decode VOIP intercept modify message from provisioner");
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, sctp->voipintercepts, vint->common.liid,
+            vint->common.liid_len, found);
+    if (!found) {
+        sctp_worker_init_voip_intercept(sctp, vint);
+    } else {
+        sctp_worker_update_modified_voip_intercept(sctp, found, vint);
+    }
+    return 0;
+}
+
+static int halt_sigtran_intercept(openli_sctp_worker_t *sctp,
+        provisioner_msg_t *provmsg) {
+    voipintercept_t *decode, *found;
+    decode = calloc(1, sizeof(voipintercept_t));
+
+    if (decode_voipintercept_halt(provmsg->msgbody, provmsg->msglen,
+            decode) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: SCTP worker failed to decode VOIP intercept withdrawal");
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, sctp->voipintercepts, decode->common.liid,
+            decode->common.liid_len, found);
+    if (!found) {
+        if (sctp->sip_worker_threads == 0 && sctp->workerid == 0) {
+            logger(LOG_INFO,
+                    "OpenLI: tried to halt VOIP intercept %s within SCTP worker but it was not present in the active intercept map?", decode->common.liid);
+        }
+        free_single_voipintercept(decode);
+        return -1;
+    }
+
+    if (sctp->workerid == 0) {
+        logger(LOG_INFO,
+                "OpenLI: SCTP worker threads are withdrawing VOIP intercept: %s",
+                found->common.liid);
+
+        if (sctp->sip_worker_threads == 0) {
+            openli_export_recv_t *expmsg;
+            expmsg = create_intercept_details_msg(&(found->common),
+                    OPENLI_INTERCEPT_TYPE_VOIP);
+            expmsg->type = OPENLI_EXPORT_INTERCEPT_OVER;
+            publish_openli_msg(sctp->zmq_pubsocks[found->common.seqtrackerid],
+                    expmsg);
+        }
+    }
+
+    HASH_DELETE(hh_liid, sctp->voipintercepts, found);
+    free_single_voipintercept(found);
+    free_single_voipintercept(decode);
+    return 0;
+}
+
+static inline voipintercept_t *lookup_sigtran_target_intercept(
+        openli_sctp_worker_t *sctp, provisioner_msg_t *provmsg,
+        openli_sip_identity_t *sipid) {
+
+    voipintercept_t *found = NULL;
+    char liidspace[1024];
+
+    sipid->username = NULL;
+    sipid->realm = NULL;
+
+    if (decode_sip_target_announcement(provmsg->msgbody,
+            provmsg->msglen, sipid, liidspace, 1024) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: SCTP worker thread %d received invalid target",
+                sctp->workerid);
+        return NULL;
+    }
+
+    HASH_FIND(hh_liid, sctp->voipintercepts, liidspace, strlen(liidspace),
+            found);
+    if (!found) {
+        logger(LOG_INFO,
+                "OpenLI: SCTP worker thread %d received a target for unknown VoIP LIID %s.",
+                liidspace);
+    }
+    return found;
+}
+
+static int add_sigtran_target_identity(openli_sctp_worker_t *sctp,
+        provisioner_msg_t *provmsg) {
+
+    voipintercept_t *found;
+    openli_sip_identity_t sipid;
+    int r;
+
+    found = lookup_sigtran_target_intercept(sctp, provmsg, &sipid);
+    if (!found) {
+        if (sipid.username) free(sipid.username);
+        if (sipid.realm) free(sipid.realm);
+        return -1;
+    }
+    // bit of a misnomer, but the end result is the same
+    r = add_new_sip_target_to_list(found, &sipid);
+    if (r == 1 && sctp->workerid == 0) {
+        logger(LOG_INFO,
+                "OpenLI: collector SCTP workers have received a new target identity for LIID %s.", found->common.liid);
+    }
+    return r;
+}
+
+static int remove_sigtran_target_identity(openli_sctp_worker_t *sctp,
+        provisioner_msg_t *provmsg) {
+
+    voipintercept_t *found;
+    openli_sip_identity_t sipid;
+
+    found = lookup_sigtran_target_intercept(sctp, provmsg, &sipid);
+    if (!found) {
+        if (sipid.username) free(sipid.username);
+        if (sipid.realm) free(sipid.realm);
+        return -1;
+    }
+    // bit of a misnomer, but the end result is the same
+    disable_sip_target_from_list(found, &sipid);
+    if (sctp->workerid == 0) {
+        logger(LOG_INFO,
+                "OpenLI: collector SCTP workers have disabled a target identity for LIID %s.", found->common.liid);
+    }
+
+    if (sipid.username) free(sipid.username);
+    if (sipid.realm) free(sipid.realm);
+
+    return 0;
+}
+
 static int sctp_worker_handle_provisioner_message(openli_sctp_worker_t *sctp,
         openli_export_recv_t *msg) {
     int ret = 0;
 
     switch(msg->data.provmsg.msgtype) {
         case OPENLI_PROTO_NOMORE_INTERCEPTS:
-            // disable_unconfirmed_sigtran_intercepts(sctp);
+            disable_unconfirmed_voip_intercepts(&(sctp->voipintercepts),
+                    NULL, NULL, NULL, NULL);
             break;
         case OPENLI_PROTO_DISCONNECT:
-            // flag_sigtran_intercepts(sctp);
+            flag_voip_intercepts_as_unconfirmed(&(sctp->voipintercepts));
             break;
         case OPENLI_PROTO_START_VOIPINTERCEPT:
-            // ret = add_new_sigtran_intercept(sctp, &(msg->data.provmsg));
+            ret = add_new_sigtran_intercept(sctp, &(msg->data.provmsg));
             break;
         case OPENLI_PROTO_HALT_VOIPINTERCEPT:
-            // ret = halt_sigtran_intercept(sctp, &(msg->data.provmsg));
+            ret = halt_sigtran_intercept(sctp, &(msg->data.provmsg));
             break;
         case OPENLI_PROTO_MODIFY_VOIPINTERCEPT:
-            // ret = modify_sigtran_intercept(sctp, &(msg->data.provmsg));
+            ret = modify_sigtran_intercept(sctp, &(msg->data.provmsg));
             break;
         case OPENLI_PROTO_ANNOUNCE_SIP_TARGET:
-            // ret = add_sigtran_target_identity(sctp, &(msg->data.provmsg));
+            ret = add_sigtran_target_identity(sctp, &(msg->data.provmsg));
             break;
         case OPENLI_PROTO_WITHDRAW_SIP_TARGET:
-            // ret = remove_sigtran_target_identity(sctp, &(msg->data.provmsg));
+            ret = remove_sigtran_target_identity(sctp, &(msg->data.provmsg));
             break;
         default:
             logger(LOG_INFO,

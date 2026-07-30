@@ -504,6 +504,7 @@ typedef struct sctp_thread_state {
     const char *worker_threadname;
     int workerid;
     int tracker_threads;
+    int sip_worker_threads;
     pthread_t threadid;
 
     void *zmq_ii_sock;
