@@ -1463,10 +1463,13 @@ enum {
 
 static int etsili_create_generic_cc_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
-        encoded_global_template_t *tplate, int templatetype) {
+        uint8_t *ipcontent, encoded_global_template_t *tplate,
+        int templatetype) {
 
     wandder_encoded_result_t *encres;
     const char *funcname;
+    wandder_decoder_t *dec = NULL;
+    int ret = 0;
 
     if (templatetype == CC_TEMPLATE_TYPE_IPCC) {
         funcname = "etsili_create_ipcc_template";
@@ -1489,12 +1492,9 @@ static int etsili_create_generic_cc_template(wandder_encoder_t *encoder,
     reset_wandder_encoder(encoder);
 
     if (templatetype == CC_TEMPLATE_TYPE_IPCC) {
-        /* Create an encoded IPCC body -- NULL should be OK for the IPcontents,
-         * since it won't be touched by libwandder (we copy it in ourselves
-         * manually later on).  */
-        encode_ipcc_body(encoder, precomputed, NULL, ipclen, dir);
+        encode_ipcc_body(encoder, precomputed, ipcontent, ipclen, dir);
     } else if (templatetype == CC_TEMPLATE_TYPE_UMTSCC) {
-        encode_umtscc_body(encoder, precomputed, NULL, ipclen, dir);
+        encode_umtscc_body(encoder, precomputed, ipcontent, ipclen, dir);
     } else {
         logger(LOG_INFO, "OpenLI: unexpected CC template type: %d",
                 templatetype);
@@ -1516,27 +1516,70 @@ static int etsili_create_generic_cc_template(wandder_encoder_t *encoder,
     memcpy(tplate->cc_content.cc_wrap, encres->encoded, encres->len);
     tplate->cc_content.cc_wrap_len = encres->len;
     tplate->cc_content.content_size = ipclen;
-    tplate->cc_content.content_ptr = NULL;
 
+    dec = init_wandder_decoder(NULL, tplate->cc_content.cc_wrap,
+            tplate->cc_content.cc_wrap_len, 0);
+    if (dec == NULL) {
+        logger(LOG_INFO, "OpenLI: unable to create decoder for templated ETSI CC");
+        ret = -1;
+        goto endtempl;
+    }
+
+    wandder_decode_next(dec);       // payload
+    wandder_decode_next(dec);       // ccpayloadsequence
+    wandder_decode_next(dec);       // ccpayload
+    wandder_decode_sequence_until(dec, 2);  // ccContents
+
+    if (templatetype == CC_TEMPLATE_TYPE_IPCC) {
+        wandder_decode_next(dec);       // IPCC
+        wandder_decode_next(dec);       // IPCC OID
+        wandder_decode_next(dec);       // iPPacket (tag 0)
+
+        if (wandder_get_identifier(dec) != 0 ||
+                wandder_get_itemlen(dec) != ipclen) {
+            logger(LOG_INFO, "OpenLI: we generated a malformed template for IPCC?");
+            ret = -1;
+            goto endtempl;
+        }
+        tplate->cc_content.content_ptr = wandder_get_itemptr(dec);
+    } else if (templatetype == CC_TEMPLATE_TYPE_UMTSCC) {
+        wandder_decode_next(dec);       // UMTSCC
+        wandder_decode_next(dec);       // iPPacket (tag 4)
+
+        if (wandder_get_identifier(dec) != 4 ||
+                wandder_get_itemlen(dec) != ipclen) {
+            logger(LOG_INFO, "OpenLI: we generated a malformed template for UMTSCC?");
+            ret = -1;
+            goto endtempl;
+        }
+        tplate->cc_content.content_ptr = wandder_get_itemptr(dec);
+    }
+    ret = 0;
+
+endtempl:
+    if (dec) free_wandder_decoder(dec);
     /* Release the encoded result -- the caller will use the templated copy */
-    wandder_release_encoded_result(encoder, encres);
-    return 0;
+    if (encres) wandder_release_encoded_result(encoder, encres);
+    return ret;
 }
 
 int etsili_create_umtscc_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
-        encoded_global_template_t *tplate) {
+        uint8_t *ipcontent, encoded_global_template_t *tplate) {
 
     return etsili_create_generic_cc_template(encoder, precomputed, dir,
-            ipclen, tplate, CC_TEMPLATE_TYPE_UMTSCC);
+            ipclen, ipcontent, tplate, CC_TEMPLATE_TYPE_UMTSCC);
 }
 
 int etsili_create_emailcc_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, uint8_t format, uint8_t dir,
-        uint16_t contentlen, encoded_global_template_t *tplate) {
+        uint16_t contentlen, uint8_t *content,
+        encoded_global_template_t *tplate) {
 
     wandder_encoded_result_t *encres;
     const char *funcname = "etsili_create_emailcc_template";
+    wandder_decoder_t *dec = NULL;
+    int ret = 0;
 
     if (tplate == NULL) {
         logger(LOG_INFO, "OpenLI: called %s with NULL template?", funcname);
@@ -1550,7 +1593,7 @@ int etsili_create_emailcc_template(wandder_encoder_t *encoder,
 
     reset_wandder_encoder(encoder);
 
-    encode_emailcc_body(encoder, precomputed, NULL, contentlen, format, dir);
+    encode_emailcc_body(encoder, precomputed, content, contentlen, format, dir);
     encres = wandder_encode_finish(encoder);
 
     if (encres == NULL || encres->len == 0 || encres->encoded == NULL) {
@@ -1567,20 +1610,57 @@ int etsili_create_emailcc_template(wandder_encoder_t *encoder,
     memcpy(tplate->cc_content.cc_wrap, encres->encoded, encres->len);
     tplate->cc_content.cc_wrap_len = encres->len;
     tplate->cc_content.content_size = contentlen;
-    tplate->cc_content.content_ptr = NULL;
 
+    dec = init_wandder_decoder(NULL, tplate->cc_content.cc_wrap,
+            tplate->cc_content.cc_wrap_len, 0);
+    if (dec == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: unable to create decoder for templated emailCC");
+        ret = -1;
+        goto endtempl;
+    }
+
+    wandder_decode_next(dec);       // payload
+    wandder_decode_next(dec);       // ccpayloadsequence
+    wandder_decode_next(dec);       // ccpayload
+    wandder_decode_sequence_until(dec, 2);  // ccContents
+    wandder_decode_next(dec);       // EmailCC
+    wandder_decode_next(dec);       // EmailCCObjId
+    wandder_decode_next(dec);       // format (tag 1)
+    wandder_decode_next(dec);       // emailContent (tag 2)
+
+    if (wandder_get_identifier(dec) != 2 ||
+            wandder_get_itemlen(dec) != contentlen) {
+        logger(LOG_INFO, "OpenLI: we generated a malformed template for EmailCC?");
+        ret = -1;
+        goto endtempl;
+    }
+
+    tplate->cc_content.content_ptr = wandder_get_itemptr(dec);
+
+endtempl:
+    if (dec) free_wandder_decoder(dec);
     /* Release the encoded result -- the caller will use the templated copy */
-    wandder_release_encoded_result(encoder, encres);
-    return 0;
+    if (encres) wandder_release_encoded_result(encoder, encres);
+    return ret;
 }
 
 int etsili_create_ipcc_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
-        encoded_global_template_t *tplate) {
+        uint8_t *ipcontent, encoded_global_template_t *tplate) {
 
     return etsili_create_generic_cc_template(encoder, precomputed, dir,
-            ipclen, tplate, CC_TEMPLATE_TYPE_IPCC);
+            ipclen, ipcontent, tplate, CC_TEMPLATE_TYPE_IPCC);
 
+}
+
+int etsili_update_cc_template(encoded_global_template_t *tplate,
+        uint8_t *content, uint16_t contentlen) {
+    if (contentlen != tplate->cc_content.content_size) {
+        return -1;
+    }
+    memcpy(tplate->cc_content.content_ptr, content, contentlen);
+    return 0;
 }
 
 inline uint8_t DERIVE_INTEGER_LENGTH(uint64_t x) {

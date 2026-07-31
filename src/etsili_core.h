@@ -304,7 +304,7 @@ void etsili_copy_preencoded(wandder_encode_job_t *dest,
 
 int etsili_create_umtscc_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
-        encoded_global_template_t *tplate);
+        uint8_t *ipcontent, encoded_global_template_t *tplate);
 int etsili_create_header_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
         struct timeval *tv, encoded_header_template_t *tplate,
@@ -314,10 +314,12 @@ int etsili_update_header_template(encoded_header_template_t *tplate,
         openli_timestamp_encoding_fmt_t timefmt);
 int etsili_create_ipcc_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
-        encoded_global_template_t *tplate);
+        uint8_t *ipcontent, encoded_global_template_t *tplate);
 int etsili_create_emailcc_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, uint8_t format, uint8_t dir,
-        uint16_t ipclen, encoded_global_template_t *tplate);
+        uint16_t ipclen, uint8_t *content, encoded_global_template_t *tplate);
+int etsili_update_cc_template(encoded_global_template_t *tplate,
+        uint8_t *content, uint16_t contentlen);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
