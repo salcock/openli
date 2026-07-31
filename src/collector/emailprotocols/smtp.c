@@ -1304,6 +1304,7 @@ static int extract_sender_from_auth_creds(emailsession_t *sess,
         /* format is username <space> digest */
         char *token = strtok(ptr, " \t\r\n");
         if (token == NULL) {
+            if (decoded) free(decoded);
             return -1;
         }
         if (strchr(token, '@') == NULL) {
