@@ -1384,9 +1384,11 @@ static int find_next_crlf(imap_session_t *sess, size_t start_index) {
                  */
                 char *endptr = NULL;
                 unsigned long toskip;
+                size_t bytes_left;
                 toskip = strtoul((char *)(curly + 1), &endptr, 10);
 
-                if (toskip >= rem) {
+                bytes_left = sess->contbufused - ((uint8_t *)endptr - sess->contbuffer);
+                if (toskip > bytes_left) {
                     /* The whole section is not here yet, so we can't
                      * skip it until it arrives */
                     found = NULL;
