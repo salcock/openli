@@ -498,6 +498,21 @@ typedef struct encoder_state {
     uint8_t halted;
 } openli_encoder_t;
 
+typedef struct gsm_invoke_saved {
+    int32_t id;
+    uint8_t map_opcode;
+    char msisdn[20];
+} gsm_invoke_saved_t;
+
+typedef struct gsm_transaction {
+    uint64_t tcap_tid_node_key;
+    time_t timestamp;
+    uint8_t active_invoke_slots;
+    gsm_invoke_saved_t inv_slots[8];
+
+    UT_hash_handle hh;
+} gsm_transaction_t;
+
 typedef struct sctp_thread_state {
 
     void *zmq_ctxt;
@@ -516,7 +531,8 @@ typedef struct sctp_thread_state {
     /* Shared state used to track how many worker threads have halted */
     halt_info_t *haltinfo;
 
-    // TODO transaction ID map
+    // transaction ID map
+    gsm_transaction_t *active_transactions;
 
     // TODO identity cache map
 

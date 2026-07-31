@@ -1180,6 +1180,7 @@ static void handle_sctp_data_chunks(colthread_local_t *loc,
         memcpy(sccpmsg.data.sccp.content, sccp, sccp_len);
         sccpmsg.data.sccp.contentlen = sccp_len;
         sccpmsg.data.sccp.timestamp = trace_get_timeval(pkt);
+        sccpmsg.data.sccp.opc_xor_dpc = tohash;
 
         zmq_send(loc->sctp_worker_queues[fwdto], (void *)&(sccpmsg),
                 sizeof(sccpmsg), 0);
