@@ -69,13 +69,79 @@ struct m2pa_layer {
 
 void *sctp_thread_begin(void *arg);
 
+static inline gsm_invoke_saved_t *get_available_invoke_slot(
+        gsm_transaction_t *tx, int32_t invokeid) {
+
+    int i, freeidx = -1;
+
+    for (i = 0; i < 8; i++) {
+        if (tx->active_invoke_slots & (1 << i)) {
+            if (tx->inv_slots[i].id == invokeid) {
+                return NULL;
+            }
+        } else if (freeidx == -1) {
+            freeidx = i;
+        }
+    }
+
+    // All slots are full!
+    if (freeidx == -1) return NULL;
+
+    tx->active_invoke_slots |= (1 << freeidx);
+    tx->inv_slots[freeidx].id = invokeid;
+    return &(tx->inv_slots[freeidx]);
+}
+
+static inline gsm_invoke_saved_t *find_existing_invoke_id(
+        gsm_transaction_t *tx, int invokeid, uint8_t remove) {
+
+    int i;
+
+    if (tx->active_invoke_slots == 0) {
+        return NULL;
+    }
+    for (i = 0; i < 8; i++) {
+        if (tx->active_invoke_slots & (1 << i)) {
+            if (invokeid == tx->inv_slots[i].id) {
+                if (remove) {
+                    tx->active_invoke_slots &= (~(1 << i));
+                }
+                return &(tx->inv_slots[i]);
+            }
+        }
+    }
+    return NULL;
+}
+
+static gsm_transaction_t *lookup_gsm_transaction(openli_sctp_worker_t *sctp,
+       uint32_t otid, uint32_t opc_xor_dpc, time_t ts, uint8_t create) {
+
+    gsm_transaction_t *tx = NULL;
+    uint64_t key = otid | (((uint64_t)opc_xor_dpc) << 32);
+
+    HASH_FIND(hh, sctp->active_transactions, &key, sizeof(key), tx);
+    if (tx == NULL && create) {
+        tx = calloc(1, sizeof(gsm_transaction_t));
+        tx->tcap_tid_node_key = key;
+        tx->timestamp = ts;
+        tx->active_invoke_slots = 0;
+        memset(tx->inv_slots, 0, sizeof(gsm_invoke_saved_t) * 8);
+
+        HASH_ADD_KEYPTR(hh, sctp->active_transactions, &(tx->tcap_tid_node_key),
+                sizeof(tx->tcap_tid_node_key), tx);
+    }
+    return tx;
+
+}
+
 static uint8_t *parse_sccp_for_tcap_tids(uint8_t *sccp, uint16_t len,
         uint16_t *tcap_len, uint32_t *otid, uint32_t *dtid,
-        wandder_decoder_t *dec) {
+        wandder_decoder_t **dec) {
     size_t data_offset, i;
     uint8_t *tcap, *itemptr;
     uint32_t ident, length, val;
     uint8_t is_gsm = 0;
+    uint16_t level = 0xFFFF;
 
     if (sccp == NULL || len < 5) {
         return NULL;
@@ -100,16 +166,25 @@ static uint8_t *parse_sccp_for_tcap_tids(uint8_t *sccp, uint16_t len,
     *dtid = 0;
     *tcap_len = len;
 
-    dec = init_wandder_decoder(dec, tcap, len, false);
-    if (wandder_decode_next(dec) <= 0) {
-        free_wandder_decoder(dec);
+    *dec = init_wandder_decoder(NULL, tcap, len, true);
+    if (!*dec) {
+        return NULL;
+    }
+    if (wandder_decode_next(*dec) <= 0) {
         return NULL;
     }
 
-    while (wandder_decode_next(dec) > 0) {
-        ident = wandder_get_identifier(dec);
-        length = wandder_get_itemlen(dec);
-        itemptr = wandder_get_itemptr(dec);
+    while (wandder_decode_next(*dec) > 0) {
+        if (level == 0xFFFF) {
+            level = wandder_get_level(*dec);
+        }
+
+        if (wandder_get_level(*dec) != level) {
+            break;
+        }
+        ident = wandder_get_identifier(*dec);
+        length = wandder_get_itemlen(*dec);
+        itemptr = wandder_get_itemptr(*dec);
 
         if (ident == 8) {
             val = 0;
@@ -126,7 +201,7 @@ static uint8_t *parse_sccp_for_tcap_tids(uint8_t *sccp, uint16_t len,
         } else if (ident == 12) {
             is_gsm = 1;
         } else {
-            wandder_decode_skip(dec);
+            wandder_decode_skip(*dec);
         }
     }
 
@@ -579,6 +654,28 @@ static int sctp_worker_process_sync_thread_message(openli_sctp_worker_t *sctp) {
 
 }
 
+#define SAVE_INVOKE \
+    tx = lookup_gsm_transaction(sctp, otid, opc_xor_dpc, tv.tv_sec, 1); \
+    invoke = get_available_invoke_slot(tx, invokeid); \
+    if (!invoke && tx->active_invoke_slots == 0xFF) { \
+        logger(LOG_INFO, "OpenLI: WARNING: Ran out of invoke open slots for transaction ID %u in SCTP worker %d. Transaction events may be missed.", \
+                otid, sctp->workerid); \
+    } else if (invoke) { \
+        invoke->map_opcode = opcode; \
+        memset(invoke->msisdn, 0, sizeof(invoke->msisdn)); \
+        if (length > sizeof(invoke->msisdn)) { \
+            length = sizeof(invoke->msisdn); \
+        } \
+        fprintf(stderr, "INVOKE saved for %016lx (id=%d opcode=%u)\n", \
+                tx->tcap_tid_node_key, invoke->id, invoke->map_opcode); \
+    }
+
+#define RECALL_INVOKE \
+    tx = lookup_gsm_transaction(sctp, dtid, opc_xor_dpc, 0, 0); \
+    if (tx) { \
+        invoke = find_existing_invoke_id(tx, invokeid, 1); \
+    }
+
 static void parse_gsm_mobile_application(openli_sctp_worker_t *sctp,
         wandder_decoder_t *dec, uint32_t otid, uint32_t dtid,
         uint32_t opc_xor_dpc, struct timeval tv) {
@@ -586,11 +683,12 @@ static void parse_gsm_mobile_application(openli_sctp_worker_t *sctp,
     uint8_t invokeid, opcode, class, component_type;
     uint32_t length, ident;
     uint8_t *itemptr;
-    char convert[256];
     gsm_transaction_t *tx = NULL;
     gsm_invoke_saved_t *invoke = NULL;
+    size_t i;
 
-    if (wandder_decode_next(dec) <= 0) return;
+    (void)dtid;
+
     component_type = wandder_get_identifier(dec);
 
     GSM_NEXT_DECODE(dec);
@@ -621,26 +719,62 @@ static void parse_gsm_mobile_application(openli_sctp_worker_t *sctp,
             // sequence
             if (wandder_decode_next(dec) <= 0) return;
 
-            GSM_DECODE_NEXT(dec);
+            GSM_NEXT_DECODE(dec);
             if (ident == 0) {
                 // MSISDN
-                tx = lookup_gsm_transaction(sctp, otid, opc_xor_dpc, tv.tv_sec);
-                invoke = get_available_invoke_slot(tx);
-                if (!invoke) {
-                    logger(LOG_INFO, "OpenLI: WARNING: Ran out of invoke open slots for transaction ID %u in SCTP worker %d. Transaction events may be missed.",
-                            otid, sctp->workerid);
-                } else {
-                    invoke->id = invokeid;
-                    invoke->map_opcode = opcode;
-                    memset(invoke->msisdn, 0, sizeof(invoke->msisdn));
-                    if (length > sizeof(invoke->msisdn)) {
-                        length = sizeof(invoke->msisdn);
-                    }
+                SAVE_INVOKE
+                if (invoke) {
                     memcpy(invoke->msisdn, itemptr, length);
+                    invoke->msisdn_len = length;
+                }
+            }
+        }
+    } else if (component_type == 2) {
+        // returnResultLast
+
+        // opcode
+        GSM_NEXT_DECODE(dec);
+        // sequence
+        GSM_NEXT_DECODE(dec);
+
+        if (length != 1 || ident != WANDDER_TAG_INTEGER ||
+                class != WANDDER_CLASS_UNIVERSAL_PRIMITIVE) {
+            return;
+        }
+        opcode = *itemptr;
+        if (opcode == 45) {
+            // sendRoutingInfoForSM
+            RECALL_INVOKE
+
+            // sequence
+            if (wandder_decode_next(dec) <= 0) return;
+            GSM_NEXT_DECODE(dec);
+            if (ident == 4) {
+                uint8_t imsi[12];
+                // IMSI
+                if (invoke) {
+                    memset(imsi, 0, 12);
+                    if (length > 12) {
+                        length = 12;
+                    }
+                    memcpy(imsi, itemptr, length);
+
+                    // add to identity cache
+                    fprintf(stderr, "MSISDN: ");
+                    for (i = 0; i < invoke->msisdn_len; i++) {
+                        fprintf(stderr, "%02x ", invoke->msisdn[i]);
+                    }
+                    fprintf(stderr, "\nIMSI: ");
+                    for (i = 0; i < length; i++) {
+                        fprintf(stderr, "%02x ", imsi[i]);
+                    }
+                    fprintf(stderr, "\n");
                 }
             }
         }
     }
+
+
 
 }
 
@@ -653,13 +787,13 @@ static void process_sccp_content(openli_sctp_worker_t *sctp,
     wandder_decoder_t *dec = NULL;
 
     tcap = parse_sccp_for_tcap_tids(sccp->content, sccp->contentlen,
-            &tcap_len, &otid, &dtid, dec);
+            &tcap_len, &otid, &dtid, &dec);
     if (tcap != NULL) {
         parse_gsm_mobile_application(sctp, dec, otid, dtid, sccp->opc_xor_dpc,
                 sccp->timestamp);
     }
 
-    destroy_wandder_decoder(dec);
+    if (dec) free_wandder_decoder(dec);
 }
 
 static int sctp_worker_process_packet(openli_sctp_worker_t *sctp) {
@@ -686,7 +820,7 @@ static int sctp_worker_process_packet(openli_sctp_worker_t *sctp) {
             break;
         }
 
-        //process_sccp_content(sctp, &(recvd.data.sccp));
+        process_sccp_content(sctp, &(recvd.data.sccp));
         if (recvd.data.sccp.content) {
             free(recvd.data.sccp.content);
         }

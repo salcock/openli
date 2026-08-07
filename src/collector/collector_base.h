@@ -501,7 +501,9 @@ typedef struct encoder_state {
 typedef struct gsm_invoke_saved {
     int32_t id;
     uint8_t map_opcode;
-    char msisdn[20];
+    uint8_t msisdn[8];
+    uint8_t msisdn_len;
+
 } gsm_invoke_saved_t;
 
 typedef struct gsm_transaction {
