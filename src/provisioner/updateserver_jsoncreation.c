@@ -571,11 +571,10 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
     prov_collector_t *col, *tmp;
     known_client_t kc;
 
-    if (HASH_CNT(hh, state->collectors) == 0) {
-        return NULL;
-    }
-
     jarray = json_object_new_array();
+    if (HASH_CNT(hh, state->collectors) == 0) {
+        return jarray;
+    }
 
     HASH_ITER(hh, state->collectors, col, tmp) {
         kc.type = TARGET_COLLECTOR;
