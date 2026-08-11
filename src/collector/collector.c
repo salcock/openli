@@ -2194,6 +2194,18 @@ static void destroy_collector_state(collector_global_t *glob) {
 
     destroy_sip_call_state(&glob->sip_call_state, &glob->sip_call_state_mutex);
 
+    if (glob->gsm_identity_map.shardcount > 0) {
+        gsm_identity_record_t *id, *tmp;
+        for (i = 0; i < glob->gsm_identity_map.shardcount; i++) {
+            pthread_rwlock_destroy(&(glob->gsm_identity_map.shards[i].rwlock));
+            HASH_ITER(hh, glob->gsm_identity_map.shards[i].rec, id, tmp) {
+                HASH_DELETE(hh, glob->gsm_identity_map.shards[i].rec, id);
+                free(id);
+            }
+        }
+        free(glob->gsm_identity_map.shards);
+    }
+
     pthread_mutex_destroy(&(glob->stats_mutex));
     pthread_mutex_destroy(&(glob->configupdate_mutex));
     pthread_mutex_destroy(&(glob->fwdassigner.mutex));
@@ -2394,6 +2406,23 @@ static int prepare_collector_glob(collector_global_t *glob) {
         glob->email_ingestor->email_worker_count = glob->email_threads;
         glob->email_ingestor->zmq_publishers = NULL;
         glob->email_ingestor->zmq_ctxt = glob->zmq_ctxt;
+    }
+
+    if (glob->sctp_threads > 0) {
+        uint16_t i;
+        glob->gsm_identity_map.shards = calloc(glob->sctp_threads * 2,
+                sizeof(gsm_identity_shard_t));
+        glob->gsm_identity_map.shardcount = glob->sctp_threads * 2;
+
+        for (i = 0; i < glob->sctp_threads * 2; i++) {
+            glob->gsm_identity_map.shards[i].rec = NULL;
+            glob->gsm_identity_map.shards[i].ident = i;
+            pthread_rwlock_init(&(glob->gsm_identity_map.shards[i].rwlock),
+                    NULL);
+        }
+    } else {
+        glob->gsm_identity_map.shards = NULL;
+        glob->gsm_identity_map.shardcount = 0;
     }
 
     return 0;

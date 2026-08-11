@@ -504,6 +504,14 @@ typedef struct gsm_invoke_saved {
     uint8_t msisdn[8];
     uint8_t msisdn_len;
 
+    uint8_t *content;
+    uint32_t content_len;
+
+    uint8_t tpdu_flags;
+    char *saved_msisdn;
+
+    uint8_t saved_imsi[8];
+
 } gsm_invoke_saved_t;
 
 typedef struct gsm_transaction {
@@ -514,6 +522,26 @@ typedef struct gsm_transaction {
 
     UT_hash_handle hh;
 } gsm_transaction_t;
+
+typedef struct imsi_msisdn_mapping {
+    uint8_t imsi[8];
+    char msisdn[16];
+    time_t ts;
+
+    UT_hash_handle hh;
+} gsm_identity_record_t;
+
+
+typedef struct imsi_ident_shard {
+    pthread_rwlock_t rwlock;
+    gsm_identity_record_t *rec;
+    uint16_t ident;
+} gsm_identity_shard_t;
+
+typedef struct imsi_identity_map {
+    gsm_identity_shard_t *shards;
+    uint16_t shardcount;
+} gsm_identity_map_t;
 
 typedef struct sctp_thread_state {
 
@@ -536,7 +564,8 @@ typedef struct sctp_thread_state {
     // transaction ID map
     gsm_transaction_t *active_transactions;
 
-    // TODO identity cache map
+    // global shared identity cache map
+    gsm_identity_map_t *imsi_identities;
 
     void *zmq_packet_return;
 

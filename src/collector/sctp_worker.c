@@ -59,6 +59,12 @@ struct m2pa_layer {
     uint8_t priority;
 } PACKED;
 
+enum {
+    SMS_STATUS_SUCCESS = 0,
+    SMS_STATUS_FAILURE = 1,
+    SMS_STATUS_UNDEFINED = 2,
+};
+
 #define GSM_NEXT_DECODE(dec) \
     if (wandder_decode_next(dec) <= 0) return; \
     itemptr = wandder_get_itemptr(dec); \
@@ -96,6 +102,9 @@ static inline gsm_invoke_saved_t *find_existing_invoke_id(
         gsm_transaction_t *tx, int invokeid, uint8_t remove) {
 
     int i;
+    if (tx == NULL) {
+        return NULL;
+    }
 
     if (tx->active_invoke_slots == 0) {
         return NULL;
@@ -133,6 +142,132 @@ static gsm_transaction_t *lookup_gsm_transaction(openli_sctp_worker_t *sctp,
     return tx;
 
 }
+
+static void convert_gsm_id_to_string(uint8_t *ptr, char *field, size_t maxlen,
+        uint16_t ptrlen) {
+
+    int i;
+    uint8_t num, j;
+
+    j = 0;
+    for (i = 0; i < ptrlen; i++) {
+        if (j >= maxlen - 1) {
+            break;
+        }
+
+        num = *(ptr + i);
+        field[j] = (char)('0' + (num & 0x0f));
+
+        j++;
+        if (j >= maxlen - 1) {
+            break;
+        }
+
+        /* bits 8-5 are 1111, which is a filler when there is an odd number
+         * of digits.
+         */
+        if ((num & 0xf0) == 0xf0) {
+            break;
+        }
+
+        field[j] = (char)('0' + ((num & 0xf0) >> 4));
+        j++;
+    }
+
+    field[j] = '\0';
+}
+
+#define DUMP_IMSI(imsi, imsi_len) \
+{ \
+   size_t i = 0; \
+   for (i = 0; i < imsi_len; i++) { \
+       fprintf(stderr, "%02x ", imsi[i]); \
+   } \
+}
+
+static gsm_identity_record_t *update_gsm_identity_map(
+        openli_sctp_worker_t *sctp,
+        uint8_t *imsi, uint8_t imsi_len, uint8_t *msisdn, uint8_t msisdn_len) {
+
+    uint16_t shid;
+    char num[16];
+    gsm_identity_shard_t *shard;
+    gsm_identity_record_t *rec;
+    struct timeval tv;
+
+    shid = hashlittle(imsi, imsi_len, 50331653) % \
+            sctp->imsi_identities->shardcount;
+    shard = &(sctp->imsi_identities->shards[shid]);
+
+    // convert msisdn from BCD encoding to the number
+    convert_gsm_id_to_string(msisdn + 1, num, sizeof(num), msisdn_len - 1);
+    gettimeofday(&tv, NULL);
+
+    pthread_rwlock_wrlock(&shard->rwlock);
+    HASH_FIND(hh, shard->rec, imsi, imsi_len, rec);
+    if (!rec) {
+        rec = calloc(1, sizeof(gsm_identity_record_t));
+        if (imsi_len > sizeof(rec->imsi)) {
+            imsi_len = sizeof(rec->imsi);
+        }
+        memcpy(rec->imsi, imsi, imsi_len);
+        HASH_ADD_KEYPTR(hh, shard->rec, rec->imsi, imsi_len, rec);
+    }
+    memcpy(rec->msisdn, num, sizeof(num));
+    rec->ts = tv.tv_sec;
+    pthread_rwlock_unlock(&shard->rwlock);
+
+    return rec;
+}
+
+static int lookup_gsm_identity_map(openli_sctp_worker_t *sctp,
+        uint8_t *imsi, uint8_t imsi_len, char *dest, uint8_t maxdest) {
+
+    uint16_t shid;
+    gsm_identity_shard_t *shard;
+    gsm_identity_record_t *rec;
+
+    shid = hashlittle(imsi, imsi_len, 50331653) % \
+            sctp->imsi_identities->shardcount;
+    shard = &(sctp->imsi_identities->shards[shid]);
+
+    pthread_rwlock_rdlock(&shard->rwlock);
+    HASH_FIND(hh, shard->rec, imsi, imsi_len, rec);
+    if (!rec) {
+        pthread_rwlock_unlock(&shard->rwlock);
+        return 0;
+    }
+
+    strncpy(dest, rec->msisdn, maxdest);
+    pthread_rwlock_unlock(&shard->rwlock);
+    return 1;
+}
+
+static void expire_gsm_identity_map(openli_sctp_worker_t *sctp) {
+    struct timeval tv;
+    gsm_identity_shard_t *shard;
+    uint16_t i;
+    gsm_identity_record_t *rec, *rectmp;
+
+    if (sctp->workerid != 0) {
+        return;
+    }
+
+    gettimeofday(&tv, NULL);
+    for (i = 0; i < sctp->imsi_identities->shardcount; i++) {
+        shard = &(sctp->imsi_identities->shards[i]);
+        pthread_rwlock_wrlock(&shard->rwlock);
+
+        HASH_ITER(hh, shard->rec, rec, rectmp) {
+            if (rec->ts < tv.tv_sec - 360) {
+                HASH_DELETE(hh, shard->rec, rec);
+                free(rec);
+            }
+        }
+        pthread_rwlock_unlock(&shard->rwlock);
+    }
+}
+
 
 static uint8_t *parse_sccp_for_tcap_tids(uint8_t *sccp, uint16_t len,
         uint16_t *tcap_len, uint32_t *otid, uint32_t *dtid,
@@ -331,9 +466,56 @@ void start_sctp_worker_thread(openli_sctp_worker_t *sctp, int workerid,
     sctp->worker_threadname = strdup(name);
     sctp->haltinfo = NULL;
     sctp->active_transactions = NULL;
+    sctp->imsi_identities = &(glob->gsm_identity_map);
 
     pthread_create(&(sctp->threadid), NULL, sctp_thread_begin, (void *)sctp);
     pthread_setname_np(sctp->threadid, sctp->worker_threadname);
+
+}
+
+static void sctp_intercept_sms_ifrequired(openli_sctp_worker_t *sctp,
+        gsm_invoke_saved_t *invoke, char *oa_msisdn, uint8_t status,
+        uint64_t sesskey, time_t ts) {
+
+    voipintercept_t *vint, *tmp;
+    uint8_t matched = 0;
+    uint64_t cin = 0;
+
+    (void)status;
+
+    HASH_ITER(hh_liid, sctp->voipintercepts, vint, tmp) {
+        libtrace_list_node_t *n = vint->targets->head;
+        matched = 0;
+        while (n) {
+            openli_sip_identity_t *x = *((openli_sip_identity_t **) (n->data));
+            n = n->next;
+
+            if (x->active == 0) {
+                continue;
+            }
+            if (x->username == NULL || strlen(x->username) == 0) {
+                continue;
+            }
+
+            if (strcmp(x->username, oa_msisdn) == 0) {
+                matched = 1;        // target is sender
+                break;
+            } else if (strcmp(x->username, invoke->saved_msisdn) == 0) {
+                matched = 2;        // target is recipient
+                break;
+            }
+
+            // ignore realm as that is a SIP construct
+        }
+
+        if (matched == 0) {
+            continue;
+        }
+
+        cin = sesskey ^ (ts << 32);
+        cin = cin * 11400714819323198485ULL;
+
+    }
 
 }
 
@@ -662,12 +844,14 @@ static int sctp_worker_process_sync_thread_message(openli_sctp_worker_t *sctp) {
                 otid, sctp->workerid); \
     } else if (invoke) { \
         invoke->map_opcode = opcode; \
+        invoke->content = NULL; \
+        invoke->content_len = 0; \
+        invoke->saved_msisdn = NULL; \
+        memset(invoke->saved_imsi, 0, sizeof(invoke->saved_imsi)); \
         memset(invoke->msisdn, 0, sizeof(invoke->msisdn)); \
         if (length > sizeof(invoke->msisdn)) { \
             length = sizeof(invoke->msisdn); \
         } \
-        fprintf(stderr, "INVOKE saved for %016lx (id=%d opcode=%u)\n", \
-                tx->tcap_tid_node_key, invoke->id, invoke->map_opcode); \
     }
 
 #define RECALL_INVOKE \
@@ -675,6 +859,45 @@ static int sctp_worker_process_sync_thread_message(openli_sctp_worker_t *sctp) {
     if (tx) { \
         invoke = find_existing_invoke_id(tx, invokeid, 1); \
     }
+
+static void record_sms_tpdu(openli_sctp_worker_t *sctp, uint8_t *tpdu,
+        uint32_t tpdulen, uint32_t otid, uint32_t opc_xor_dpc,
+        struct timeval tv, uint8_t invokeid, uint8_t opcode,
+        char *dest_msisdn, uint8_t *imsi) {
+
+    gsm_transaction_t *tx = NULL;
+    gsm_invoke_saved_t *invoke = NULL;
+    uint8_t *ptr = tpdu;
+    uint8_t length;
+    uint8_t saved_flags;
+
+    saved_flags = (*ptr);
+
+    // We need to do a little decoding to get the TP-OA (i.e. the SMS
+    // sender)
+    ptr++;
+    length = *ptr;
+
+    SAVE_INVOKE
+    if (!invoke) return;
+
+    // now save the entire PDU as it is into a TX entry so that we can
+    // emit it later on once we have the confirmation that it was forwarded
+    // (or not)
+    invoke->tpdu_flags = saved_flags;
+    memcpy(invoke->msisdn, ptr + 1, length);
+    invoke->msisdn_len = length;
+
+    invoke->content = malloc(tpdulen);
+    memcpy(invoke->content, tpdu, tpdulen);
+    invoke->content_len = tpdulen;
+
+    if (dest_msisdn) {
+        invoke->saved_msisdn = strdup(dest_msisdn);
+    }
+
+    memcpy(invoke->saved_imsi, imsi, 8);
+}
 
 static void parse_gsm_mobile_application(openli_sctp_worker_t *sctp,
         wandder_decoder_t *dec, uint32_t otid, uint32_t dtid,
@@ -685,7 +908,7 @@ static void parse_gsm_mobile_application(openli_sctp_worker_t *sctp,
     uint8_t *itemptr;
     gsm_transaction_t *tx = NULL;
     gsm_invoke_saved_t *invoke = NULL;
-    size_t i;
+    char dest_msisdn[16];
 
     (void)dtid;
 
@@ -728,7 +951,40 @@ static void parse_gsm_mobile_application(openli_sctp_worker_t *sctp,
                     invoke->msisdn_len = length;
                 }
             }
+        } else if (opcode == 44) {
+            // forwardSM
+            uint8_t imsi[8];
+
+            // sequence
+            if (wandder_decode_next(dec) <= 0) return;
+
+            GSM_NEXT_DECODE(dec);
+            if (ident == 0) {
+                // sm-RP-DA
+                memset(imsi, 0, 8);
+                if (length > 8) {
+                    length = 8;
+                }
+                memcpy(imsi, itemptr, length);
+                if (lookup_gsm_identity_map(sctp, imsi, length, dest_msisdn,
+                        sizeof(dest_msisdn)) != 1) {
+                    return;
+                }
+            } else {
+                return;
+            }
+
+            GSM_NEXT_DECODE(dec);
+            while (ident != WANDDER_TAG_OCTETSTRING ||
+                    class != WANDDER_CLASS_UNIVERSAL_PRIMITIVE) {
+                GSM_NEXT_DECODE(dec);
+            }
+
+            record_sms_tpdu(sctp, itemptr, length, otid, opc_xor_dpc, tv,
+                    invokeid, opcode, dest_msisdn, imsi);
+
         }
+
     } else if (component_type == 2) {
         // returnResultLast
 
@@ -760,18 +1016,32 @@ static void parse_gsm_mobile_application(openli_sctp_worker_t *sctp,
                     memcpy(imsi, itemptr, length);
 
                     // add to identity cache
-                    fprintf(stderr, "MSISDN: ");
-                    for (i = 0; i < invoke->msisdn_len; i++) {
-                        fprintf(stderr, "%02x ", invoke->msisdn[i]);
-                    }
-                    fprintf(stderr, "\nIMSI: ");
-                    for (i = 0; i < length; i++) {
-                        fprintf(stderr, "%02x ", imsi[i]);
-                    }
-                    fprintf(stderr, "\n");
+                    update_gsm_identity_map(sctp, imsi, length,
+                            invoke->msisdn, invoke->msisdn_len);
+
+                    char foobar[16];
+                    convert_gsm_id_to_string(invoke->msisdn + 1, foobar,
+                            16, invoke->msisdn_len - 1);
                 }
             }
+        } else if (opcode == 44) {
+            char oa_msisdn[16];
+
+            // forwardSM
+            RECALL_INVOKE
+            if (!invoke) {
+                return;
+            }
+
+            // message was sent successfully, so generate the IRI if either
+            // party matches an intercept target
+            convert_gsm_id_to_string(invoke->msisdn + 1, oa_msisdn,
+                    sizeof(oa_msisdn), invoke->msisdn_len - 1);
+            sctp_intercept_sms_ifrequired(sctp, invoke, oa_msisdn,
+                    SMS_STATUS_SUCCESS, tx->tcap_tid_node_key, tv.tv_sec);
         }
+
+
     }
 
 
@@ -836,6 +1106,7 @@ void sctp_worker_main(openli_sctp_worker_t *sctp) {
     sync_epoll_t purgetimer;
     struct itimerspec its;
     int x;
+    uint32_t purgetriggers = 0;
 
     logger(LOG_INFO, "OpenLI: starting SCTP worker thread %d", sctp->workerid);
     topoll = calloc(3, sizeof(zmq_pollitem_t));
@@ -897,12 +1168,18 @@ void sctp_worker_main(openli_sctp_worker_t *sctp) {
             topoll[2].revents = 0;
             close(topoll[2].fd);
 
-            // clear requests that have not seen a response in 5 seconds
-
             // clear transactions that have not been active for 10 seconds
 
-            // clear IMSI mappings that have not been seen for a day
+            // once per hour, clear IMSI mappings that have not been seen
+            // for a day
+            if (purgetriggers > 10) {
+                if (sctp->workerid == 0) {
+                    expire_gsm_identity_map(sctp);
+                }
+                purgetriggers = 0;
+            }
 
+            purgetriggers ++;
             purgetimer.fdtype = 0;
             purgetimer.fd = timerfd_create(CLOCK_MONOTONIC, 0);
             timerfd_settime(purgetimer.fd, 0, &its, NULL);
@@ -913,12 +1190,21 @@ void sctp_worker_main(openli_sctp_worker_t *sctp) {
 
 }
 
-void clear_transaction_map(openli_sctp_worker_t *sctp) {
+static void clear_transaction_map(openli_sctp_worker_t *sctp) {
 
     gsm_transaction_t *tx, *tmp;
+    size_t i;
 
     HASH_ITER(hh, sctp->active_transactions, tx, tmp) {
         HASH_DELETE(hh, sctp->active_transactions, tx);
+        for (i = 0; i < 8; i++) {
+            if (tx->inv_slots[i].content) {
+                free(tx->inv_slots[i].content);
+            }
+            if (tx->inv_slots[i].saved_msisdn) {
+                free(tx->inv_slots[i].saved_msisdn);
+            }
+        }
         free(tx);
     }
 }

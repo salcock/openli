@@ -417,7 +417,7 @@ struct collector_global {
     x_input_t *x_inputs;
     pthread_rwlock_t x_input_mutex;
 
-    
+    gsm_identity_map_t gsm_identity_map;
 
 };
 
