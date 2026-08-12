@@ -161,8 +161,17 @@ static inline void copy_intercept_common(intercept_common_t *src,
 
     dest->liid = strdup(src->liid);
     dest->liid_format = src->liid_format;
-    dest->authcc = strdup(src->authcc);
-    dest->delivcc = strdup(src->delivcc);
+    if (src->authcc) {
+        dest->authcc = strdup(src->authcc);
+    } else {
+        dest->authcc = NULL;
+    }
+
+    if (src->delivcc) {
+        dest->delivcc = strdup(src->delivcc);
+    } else {
+        dest->delivcc = NULL;
+    }
 
     if (src->targetagency) {
         dest->targetagency = strdup(src->targetagency);
@@ -421,6 +430,10 @@ void intercept_encryption_mode_as_string(payload_encryption_method_t method,
 sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
         uint32_t cin, time_t created) {
     sipregister_t *newreg;
+
+    if (callid == NULL) {
+        return NULL;
+    }
 
     newreg = (sipregister_t *)calloc(1, sizeof(sipregister_t));
 
