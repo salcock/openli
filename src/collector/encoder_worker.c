@@ -66,8 +66,7 @@ static void destroy_known_liid(encoder_liid_state_t *known) {
     free(known);
 }
 
-static void destroy_encoding_job(openli_encoding_job_t *job,
-        uint8_t free_request) {
+void destroy_encoding_job(openli_encoding_job_t *job, uint8_t free_request) {
 
     if (!job) {
         return;
@@ -1334,12 +1333,12 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             ret = 0;
     }
 
-    finalize_encoded_result(res, job, enc, known, job->origreq->type,
-            job->origreq->destid);
-
     if (ret < 0) {
         return ret;
     }
+    finalize_encoded_result(res, job, enc, known, job->origreq->type,
+            job->origreq->destid);
+
     return enccount;
 }
 
@@ -1436,6 +1435,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
                     logger(LOG_INFO,
                             "OpenLI: encoder worker had an error when encoding %d record",
                             job.origreq->type);
+                    exit(-5);
                 }
 encodejoberror:
                 destroy_encoding_job(&job, 1);

@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <assert.h>
+#include <unistd.h>
 
 #include "util.h"
 #include "logger.h"
@@ -476,7 +477,7 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
         published_intercept_msg_t *msg) {
 
     exporter_intercept_state_t *intstate;
-    size_t index;
+    size_t index, shutdown_retries = 0;
     int ret = 1;
     openli_encoding_job_t job;
 
@@ -497,12 +498,21 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
     while (1) {
         if ((ret = zmq_send(seqdata->zmq_pushjobsocks[index], (char *)&job,
                 sizeof(openli_encoding_job_t), 0)) < 0) {
-            if (errno == EAGAIN) {
+            if (errno == EAGAIN || errno == EINTR) {
+                if (collector_halt) {
+                    shutdown_retries ++;
+                    if (shutdown_retries > 50) {
+                        free(job.liid);
+                        return -1;
+                    }
+                }
+                usleep(1000);
                 continue;
             }
             logger(LOG_INFO,
                     "Error while pushing encoding job to worker threads: %s",
                     strerror(errno));
+            free(job.liid);
             return -1;
         }
         break;
@@ -524,6 +534,7 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
     openli_encoding_job_t job;
     int ret = 1;
     size_t index;
+    size_t shutdown_retries = 0;
 
     job.seqno = *seqno;
 	job.preencoded = intstate->preencoded;
@@ -562,12 +573,24 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
     while (1) {
         if ((ret = zmq_send(seqdata->zmq_pushjobsocks[index], (char *)&job,
                 sizeof(openli_encoding_job_t), 0)) < 0) {
-            if (errno == EAGAIN) {
+            if (errno == EAGAIN || errno == EINTR) {
+                if (collector_halt) {
+                    shutdown_retries ++;
+                    if (shutdown_retries > 50) {
+                        // we're in shutdown mode and this socket is not
+                        // draining -- bail, otherwise we'll be stuck
+                        // here forever
+                        destroy_encoding_job(&job, 1);
+                        return -1;
+                    }
+                }
+                usleep(1000);
                 continue;
             }
             logger(LOG_INFO,
                     "Error while pushing encoding job to worker threads: %s",
                     strerror(errno));
+            destroy_encoding_job(&job, 1);
             return -1;
         }
         break;

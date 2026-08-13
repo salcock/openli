@@ -269,6 +269,8 @@ uint8_t *encrypt_payload_container_aes_192_cbc(EVP_CIPHER_CTX *ctx,
         wandder_etsispec_t *etsidecoder, uint8_t *fullrec, uint16_t reclen,
         uint8_t *enckey, size_t enckeylen);
 
+/* defined in encoder_worker.h */
+void destroy_encoding_job(openli_encoding_job_t *job, uint8_t free_request);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

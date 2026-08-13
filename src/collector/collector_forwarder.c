@@ -724,6 +724,7 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
 static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
 
     int x, i, msgcnt;
+    int empty_retries = 0;
     openli_encoded_result_t res[MAX_ENCODED_RESULT_BATCH * 2];
 
     while (fwd->encoders_over < fwd->encoders) {
@@ -734,9 +735,15 @@ static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
         }
 
         if (x < 0) {
+            usleep(5000);
+            empty_retries ++;
+            if (empty_retries > 100) {
+                break;
+            }
             continue;
         }
 
+        empty_retries = 0;
         if (x % sizeof(openli_encoded_result_t) != 0) {
             logger(LOG_INFO, "OpenLI: forwarding thread %d received odd sized message (%d bytes)?",
                     fwd->forwardid, x);

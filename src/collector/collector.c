@@ -2968,6 +2968,7 @@ static void *start_ip_sync_thread(void *params) {
 
 haltsyncthread:
     /* Collector is halting, stop all processing threads */
+    sync_drop_all_mediators(sync);
     halt_processing_threads(glob);
     clean_sync_data(sync);
 

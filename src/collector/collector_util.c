@@ -87,7 +87,7 @@ void clear_zmq_socket_array(void **zmq_socks, int sockcount) {
 int send_halt_message_to_zmq_socket_array(void **zmq_socks, int sockcount,
 		halt_info_t *haltinfo) {
     openli_export_recv_t *haltmsg;
-    int zero = 0, ret, i, failed;
+    int ret, i, failed;
 
     if (zmq_socks == NULL) {
         return 0;
@@ -101,20 +101,21 @@ int send_halt_message_to_zmq_socket_array(void **zmq_socks, int sockcount,
         haltmsg = (openli_export_recv_t *)calloc(1,
                 sizeof(openli_export_recv_t));
         haltmsg->type = OPENLI_EXPORT_HALT;
-	haltmsg->data.haltinfo = haltinfo;
+        haltmsg->data.haltinfo = haltinfo;
 
-        ret = zmq_send(zmq_socks[i], &haltmsg, sizeof(haltmsg), ZMQ_NOBLOCK);
-        if (ret < 0 && errno == EAGAIN) {
-            failed ++;
-            free(haltmsg);
-            continue;
+        while (1) {
+            ret = zmq_send(zmq_socks[i], &haltmsg, sizeof(haltmsg), 0);
+            if (ret <= 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                logger(LOG_INFO, "OpenLI Collector: error sending halt message to a worker thread -- collector will likely hang: %s", strerror(errno));
+                free(haltmsg);
+                failed ++;
+                break;
+            }
+            break;
         }
-        if (ret <= 0) {
-            free(haltmsg);
-        }
-        zmq_setsockopt(zmq_socks[i], ZMQ_LINGER, &zero, sizeof(zero));
-        zmq_close(zmq_socks[i]);
-	zmq_socks[i] = NULL;
     }
     return failed;
 }

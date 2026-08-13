@@ -158,17 +158,16 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 #define HALT_THREADS(socks, count) \
     pthread_mutex_lock(&(haltinfo.mutex)); \
     haltinfo.halted = 0; \
-    haltfails = send_halt_message_to_zmq_socket_array( \
-        socks, count, &haltinfo); \
-    \
-    if (haltfails) { \
-        haltattempts ++; \
-        usleep(250000); \
-        continue; \
-    } \
+    send_halt_message_to_zmq_socket_array(socks, count, &haltinfo); \
     \
     while (count > 0 && haltinfo.halted < count) { \
-        pthread_cond_wait(&(haltinfo.cond), &(haltinfo.mutex)); \
+        struct timespec ts; \
+        clock_gettime(CLOCK_REALTIME, &ts); \
+        ts.tv_sec += 2; \
+        if (pthread_cond_timedwait(&(haltinfo.cond), \
+                    &(haltinfo.mutex), &ts) != 0) { \
+            break; \
+        } \
     } \
     pthread_mutex_unlock(&(haltinfo.mutex));
 
@@ -215,7 +214,7 @@ static void purge_unused_udpsink_mappings(collector_sync_t *sync) {
 void clean_sync_data(collector_sync_t *sync) {
 
     int zero=0;
-    int haltattempts = 0, haltfails = 0;
+    int haltattempts = 0;
     ip_to_session_t *iter, *tmp;
     default_radius_user_t *raditer, *radtmp;
     halt_info_t haltinfo;
@@ -289,7 +288,6 @@ void clean_sync_data(collector_sync_t *sync) {
     pthread_cond_init(&(haltinfo.cond), NULL);
 
     while (haltattempts < 10) {
-        haltfails = 0;
 
         if (sync->zmq_colsock) {
             int x;
@@ -360,11 +358,11 @@ void clean_sync_data(collector_sync_t *sync) {
     pthread_mutex_destroy(&(haltinfo.mutex));
     pthread_cond_destroy(&(haltinfo.cond));
 
-    free(sync->zmq_emailsocks);
-    free(sync->zmq_sipsocks);
-    free(sync->zmq_gtpsocks);
-    free(sync->zmq_pubsocks);
-    free(sync->zmq_fwdctrlsocks);
+    clear_zmq_socket_array(sync->zmq_sipsocks, sync->sipcount);
+    clear_zmq_socket_array(sync->zmq_emailsocks, sync->emailcount);
+    clear_zmq_socket_array(sync->zmq_gtpsocks, sync->gtpcount);
+    clear_zmq_socket_array(sync->zmq_pubsocks, sync->pubsockcount);
+    clear_zmq_socket_array(sync->zmq_fwdctrlsocks, sync->forwardcount);
 
 }
 
