@@ -607,6 +607,8 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx,
     if (ctx != NULL){
         int errr;
         dest->ssl = SSL_new(ctx);
+        SSL_set_mode(dest->ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
+                SSL_MODE_ENABLE_PARTIAL_WRITE);
         SSL_set_fd(dest->ssl, sockfd);
         errr = SSL_connect(dest->ssl);
 
@@ -902,7 +904,6 @@ static void complete_ssl_handshake(forwarding_thread_data_t *fwd,
         }
     } else {
         logger(LOG_DEBUG, "OpenLI: SSL Handshake from mediator accepted by forwarding thread %d", fwd->forwardid);
-        dest->waitingforhandshake = 0;
         dest->ssllasterror = 0;
         ret = transmit_forwarder_hello(dest->fd, dest->ssl, fwd->forwardid,
                 fwd->RMQ_conf.enabled);
@@ -913,6 +914,8 @@ static void complete_ssl_handshake(forwarding_thread_data_t *fwd,
                     strerror(errno));
             dest->ssllasterror = 1;
             disconnect_mediator(fwd, dest);
+        } else {
+            dest->waitingforhandshake = 0;
         }
     }
 }
@@ -1198,7 +1201,19 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             /* We don't actually receive messages from the mediator (yet?).
              * so this is entirely for detecting peer disconnections.
              */
-            if ((r = recv(fwd->topoll[i].fd, recvbuf, 8, 0) <= 0)) {
+            if (dest->ssl) {
+                r = SSL_read(dest->ssl, recvbuf, 8);
+                if (r <= 0) {
+                    int err = SSL_get_error(dest->ssl, r);
+                    if (err != SSL_ERROR_WANT_WRITE && err != SSL_ERROR_WANT_READ) {
+                        logger(LOG_INFO,
+                            "OpenLI: connection to mediator %s:%s has failed in forwarding thread %d",
+                            dest->ipstr, dest->portstr, fwd->forwardid);
+                        disconnect_mediator(fwd, dest);
+                        continue;
+                    }
+                }
+            } else if ((r = recv(fwd->topoll[i].fd, recvbuf, 8, 0)) <= 0) {
                 if (r < 0) {
                     logger(LOG_INFO,
                         "OpenLI: connection to mediator %s:%s has failed in forwarding thread %d: (%s)",
@@ -1226,6 +1241,9 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             continue;
         }
         fwd->topoll[i].revents = 0;
+        if (dest->waitingforhandshake) {
+            continue;
+        }
         if (fwd->ampq_conn || fwd->RMQ_conf.enabled) {
             continue;
         }
