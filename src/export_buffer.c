@@ -335,30 +335,36 @@ static inline void post_transmit(export_buffer_t *buf) {
 int transmit_buffered_records(export_buffer_t *buf, int fd,
         uint64_t bytelimit, SSL *ssl) {
 
-    uint64_t sent = 0;
-    uint8_t *bhead = buf->bufhead + buf->writeoffset;
-    uint64_t offset = buf->partialfront;
-    int ret, rcint;
-    Word_t index = 0;
+    uint64_t total_sent = 0;
 
-    if (buf->partialrem > 0) {
-        sent = buf->partialrem;
-    } else {
-        sent = (buf->buftail - (bhead + offset));
+    while (get_buffered_amount(buf) > 0) {
+        uint64_t sent = 0;
+        uint8_t *bhead = buf->bufhead + buf->writeoffset;
+        uint64_t offset = buf->partialfront;
+        int ret, rcint;
+        Word_t index = 0;
 
-        if (sent > bytelimit) {
-            index = bytelimit + 1 + buf->writeoffset;
-            J1P(rcint, buf->record_offsets, index);
-            if (rcint == 0) {
-                assert(rcint != 0);
-                return 0;
+        if (buf->partialrem > 0) {
+            sent = buf->partialrem;
+        } else {
+            sent = (buf->buftail - (bhead + offset));
+
+            if (sent > bytelimit) {
+                index = bytelimit + 1 + buf->writeoffset;
+                J1P(rcint, buf->record_offsets, index);
+                if (rcint == 0) {
+                    assert(rcint != 0);
+                    return 0;
+                }
+                sent = index - buf->writeoffset;
             }
-            sent = index - buf->writeoffset;
+            buf->partialrem = sent;
         }
-        buf->partialrem = sent;
-    }
 
-    if (sent != 0) {
+        if (sent == 0) {
+            break;
+        }
+
         if (ssl != NULL) {
             ret = SSL_write(ssl, bhead + offset, (int)sent);
 
@@ -374,36 +380,39 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
                         errr, ERR_error_string(ERR_get_error(), errstring));
                 return -1;
             }
-        }
-        else {
+        } else {
             ret = send(fd, bhead + offset, (int)sent, MSG_DONTWAIT);
+
+            if (ret < 0) {
+                if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                    return -1;
+                }
+                return (int)total_sent;
+            }
         }
 
-        if (ret < 0) {
-            if (errno != EAGAIN) {
-                return -1;
-            }
-            return 0;
-        } else if ((uint64_t)ret < sent) {
+        if ((uint64_t)ret < sent) {
             /* Partial send, move partialfront ahead by whatever we did send. */
             buf->partialfront += (uint64_t)ret;
             buf->partialrem -= (uint64_t)ret;
-            return ret;
+            total_sent += (uint64_t)ret;
+            break;
         }
+
         buf->writeoffset += ((uint64_t)ret + buf->partialfront);
         if (buf->deadwindow != 0 && buf->writeoffset > buf->deadwindow) {
             int rcint;
             Word_t index = buf->writeoffset - buf->deadwindow;
             J1P(rcint, buf->record_offsets, index);
-
             buf->deadfront = (uint64_t)index;
         } else if (buf->deadwindow == 0) {
             buf->deadfront = buf->writeoffset;
         }
+        total_sent += (uint64_t)ret;
+        post_transmit(buf);
     }
 
-    post_transmit(buf);
-    return sent;
+    return (int)total_sent;
 }
 
 int check_rmq_connection_block_status(amqp_connection_state_t amqp_state,
