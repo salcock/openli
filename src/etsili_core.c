@@ -1533,12 +1533,17 @@ static int etsili_create_generic_cc_template(wandder_encoder_t *encoder,
     if (templatetype == CC_TEMPLATE_TYPE_IPCC) {
         wandder_decode_next(dec);       // IPCC
         wandder_decode_next(dec);       // IPCC OID
-        wandder_decode_next(dec);       // iPPacket (tag 0)
+        wandder_decode_next(dec);       // iPCCContents
+        wandder_decode_next(dec);       // iPPackets
 
         if (wandder_get_identifier(dec) != 0 ||
                 wandder_get_itemlen(dec) != ipclen) {
             logger(LOG_INFO, "OpenLI: we generated a malformed template for IPCC?");
             ret = -1;
+            free(tplate->cc_content.cc_wrap);
+            tplate->cc_content.cc_wrap = NULL;
+            tplate->cc_content.cc_wrap_len = 0;
+            tplate->cc_content.content_size = 0;
             goto endtempl;
         }
         tplate->cc_content.content_ptr = wandder_get_itemptr(dec);
@@ -1550,6 +1555,10 @@ static int etsili_create_generic_cc_template(wandder_encoder_t *encoder,
                 wandder_get_itemlen(dec) != ipclen) {
             logger(LOG_INFO, "OpenLI: we generated a malformed template for UMTSCC?");
             ret = -1;
+            free(tplate->cc_content.cc_wrap);
+            tplate->cc_content.cc_wrap = NULL;
+            tplate->cc_content.cc_wrap_len = 0;
+            tplate->cc_content.content_size = 0;
             goto endtempl;
         }
         tplate->cc_content.content_ptr = wandder_get_itemptr(dec);
@@ -1656,6 +1665,9 @@ int etsili_create_ipcc_template(wandder_encoder_t *encoder,
 
 int etsili_update_cc_template(encoded_global_template_t *tplate,
         uint8_t *content, uint16_t contentlen) {
+    if (tplate->cc_content.content_ptr == NULL) {
+        return -1;
+    }
     if (contentlen != tplate->cc_content.content_size) {
         return -1;
     }
