@@ -1499,7 +1499,7 @@ static inline int ack_mediator_liid_messages(amqp_connection_state_t state,
 
     int x;
 
-    if (state == NULL) {
+    if (state == NULL || deliv_tag == 0) {
         return 0;
     }
 

@@ -425,7 +425,7 @@ static int consume_available_rmq_records(handover_t *ho,
             reset_handover_rmq(ho);
             logger(LOG_INFO, "OpenLI Mediator: error while consuming CC messages from internal queue by agency %s", state->agencyid);
             return 0;
-        } else if (r > 0) {
+        } else if (r > 0 && ho->ho_state->next_rmq_ack > 0) {
             ho->ho_state->valid_rmq_ack = 1;
         }
     } else if (ho->handover_type == HANDOVER_HI2) {
@@ -436,7 +436,7 @@ static int consume_available_rmq_records(handover_t *ho,
             reset_handover_rmq(ho);
             logger(LOG_INFO, "OpenLI Mediator: error while consuming IRI messages from internal queue by agency %s", state->agencyid);
             return 0;
-        } else if (r > 0) {
+        } else if (r > 0 && ho->ho_state->next_rmq_ack > 0) {
             ho->ho_state->valid_rmq_ack = 1;
         }
     }
@@ -1174,10 +1174,6 @@ static void *run_agency_thread(void *params) {
                     state->epoll_fd, state->handover_id + 1,
                     state->agency.handover_retry);
 
-            if (r_hi2 < 0 || r_hi3 < 0) {
-                break;
-            }
-
             if (r_hi2 > 0 && r_hi3 > 0) {
                 is_connected = 1;
             }
@@ -1223,12 +1219,6 @@ static void *run_agency_thread(void *params) {
             nfds = epoll_wait(state->epoll_fd, evs, 64, 100);
 
             if (nfds == 0) {
-                if (state->agency.hi2->outev) {
-                    consume_available_rmq_records(state->agency.hi2, state);
-                }
-                if (state->agency.hi3->outev) {
-                    consume_available_rmq_records(state->agency.hi3, state);
-                }
                 continue;
             }
 

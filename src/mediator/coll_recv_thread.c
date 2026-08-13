@@ -983,12 +983,12 @@ static int receive_collector(coll_recv_t *col, openli_epoll_ev_t *mev) {
 
 processacks:
     if (col->amqp_producer_state && col->saved_cc_msg_cnt > 0 &&
-            publish_pending_cc_batches(col) <= 0) {
+            publish_pending_cc_batches(col) < 0) {
         disconnect_mediator_producer_RMQ(col);
     }
 
     if (col->amqp_producer_state && col->saved_raw_msg_cnt > 0 &&
-            publish_pending_raw_batches(col) <= 0) {
+            publish_pending_raw_batches(col) < 0) {
         disconnect_mediator_producer_RMQ(col);
     }
 
@@ -1347,6 +1347,7 @@ static void *start_collector_thread(void *params) {
         if (col->amqp_producer_state == NULL) {
             if (join_mediator_RMQ_as_producer(col) == NULL) {
                 col->disabled_log = 1;
+                usleep(100000);
                 continue;
             }
             col->iris_published = 0;

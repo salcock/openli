@@ -41,7 +41,7 @@
  */
 #define PCAP_RMQ_BATCH_SIZE 4096
 #define PCAP_DRAIN_BUDGET_NS (UINT64_C(20) * 1000 * 1000)
-#define PCAP_IDLE_POLL_MS 50
+#define PCAP_IDLE_POLL_MS 250
 
 #include "mediator_rmq.h"
 #include <libtrace.h>
