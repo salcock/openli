@@ -30,6 +30,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <unistd.h>
 
 #include "netcomms.h"
 #include "logger.h"
@@ -1928,7 +1929,18 @@ int transmit_forwarder_hello(int sockfd, SSL *ssl, int threadid,
     hellomsg.fwd_hello_body.threadid = htonl(threadid);
 
     if (ssl) {
-        r = SSL_write(ssl, &hellomsg, sizeof(hellomsg));
+        do {
+            r = SSL_write(ssl, &hellomsg, sizeof(hellomsg));
+            if (r <= 0) {
+                int err = SSL_get_error(ssl, r);
+                if (err == SSL_ERROR_WANT_WRITE ||
+                        err == SSL_ERROR_WANT_READ) {
+                    usleep(1000);
+                    continue;
+                }
+                return -1;
+            }
+        } while (r <= 0);
     } else {
         r = send(sockfd, &hellomsg, sizeof(hellomsg), 0);
     }
@@ -1957,18 +1969,26 @@ int transmit_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t *err) {
 
     if (nb->ssl != NULL){
         ret = SSL_write(nb->ssl, nb->actptr, NETBUF_CONTENT_SIZE(nb));
-    }
-    else {
-        ret = send(nb->fd, nb->actptr, NETBUF_CONTENT_SIZE(nb), MSG_DONTWAIT);
-    }
-
-    if (ret == -1) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            /* Socket not available right now... */
-            return 1;
+        if (ret <= 0) {
+            int sslr = SSL_get_error(nb->ssl, ret);
+            if (sslr == SSL_ERROR_WANT_WRITE || sslr == SSL_ERROR_WANT_READ) {
+                /* Non-blocking TLS write is pending */
+                return 1;
+            }
+            *err = OPENLI_PROTO_SEND_ERROR;
+            return -1;
         }
-        *err = OPENLI_PROTO_SEND_ERROR;
-        return -1;
+    } else {
+        ret = send(nb->fd, nb->actptr, NETBUF_CONTENT_SIZE(nb), MSG_DONTWAIT);
+
+        if (ret == -1) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                /* Socket not available right now... */
+                return 1;
+            }
+            *err = OPENLI_PROTO_SEND_ERROR;
+            return -1;
+        }
     }
 
 
@@ -3272,21 +3292,31 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
     }
 
     if (nb->ssl != NULL){
+        int sslr;
         ret = SSL_read(nb->ssl, nb->appendptr, NETBUF_SPACE_REM(nb));
-    }
-    else {
+        if (ret <= 0) {
+            sslr = SSL_get_error(nb->ssl, ret);
+            if (sslr == SSL_ERROR_WANT_READ || sslr == SSL_ERROR_WANT_WRITE) {
+                return OPENLI_PROTO_NO_MESSAGE;
+            } else if (sslr == SSL_ERROR_ZERO_RETURN ||
+                    (sslr == SSL_ERROR_SYSCALL && ret == 0)) {
+                return OPENLI_PROTO_PEER_DISCONNECTED;
+            }
+            return OPENLI_PROTO_RECV_ERROR;
+        }
+
+    } else {
         ret = recv(nb->fd, nb->appendptr, NETBUF_SPACE_REM(nb), MSG_DONTWAIT);
-    }
-    
-    if (ret <= 0) {
-        if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            return OPENLI_PROTO_NO_MESSAGE;
+        if (ret <= 0) {
+            if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                return OPENLI_PROTO_NO_MESSAGE;
+            }
+            if (ret == 0) {
+                /* Other end disconnected */
+                return OPENLI_PROTO_PEER_DISCONNECTED;
+            }
+            return OPENLI_PROTO_RECV_ERROR;
         }
-        if (ret == 0) {
-            /* Other end disconnected */
-            return OPENLI_PROTO_PEER_DISCONNECTED;
-        }
-        return OPENLI_PROTO_RECV_ERROR;
     }
 
     nb->appendptr += ret;
