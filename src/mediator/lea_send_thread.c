@@ -1216,7 +1216,7 @@ static void *run_agency_thread(void *params) {
         /* epoll main loop for a LEA send thread */
         timerexpired = 0;
         while (!timerexpired && !is_halted) {
-            nfds = epoll_wait(state->epoll_fd, evs, 64, 100);
+            nfds = epoll_wait(state->epoll_fd, evs, 64, -1);
 
             if (nfds == 0) {
                 continue;
