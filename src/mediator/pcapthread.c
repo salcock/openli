@@ -41,7 +41,7 @@
  */
 #define PCAP_RMQ_BATCH_SIZE 4096
 #define PCAP_DRAIN_BUDGET_NS (UINT64_C(20) * 1000 * 1000)
-#define PCAP_IDLE_POLL_MS 250
+#define PCAP_IDLE_POLL_MS 1000
 
 #include "mediator_rmq.h"
 #include <libtrace.h>
@@ -988,7 +988,7 @@ static int pcap_thread_epoll_event(lea_thread_state_t *state,
             break;
         case OPENLI_EPOLL_HANDOVER_RMQ:
             /* Packets are available to be read from RMQ */
-            ret = 1;
+            ret = 2;
             break;
         case OPENLI_EPOLL_PCAP_TIMER:
             /* halt the timer
@@ -1034,7 +1034,7 @@ static void *run_pcap_thread(void *params) {
     lea_thread_state_t *state = (lea_thread_state_t *)params;
     openli_epoll_ev_t *flushtimer = NULL;
     struct epoll_event evs[64];
-    int i, nfds, timerexpired = 0;
+    int i, nfds, timerexpired = 0, rmq_active = 0;
     int is_halted = 0;
     pcap_thread_state_t pstate;
     uint32_t firstflush;
@@ -1108,11 +1108,18 @@ static void *run_pcap_thread(void *params) {
             }
 
             for (i = 0; i < nfds; i++) {
-                timerexpired = pcap_thread_epoll_event(state, &pstate,
+                int status = 0;
+                status = pcap_thread_epoll_event(state, &pstate,
                         &(evs[i]));
-                if (timerexpired == -1) {
+                if (status == -1) {
                     is_halted = 1;
                     break;
+                }
+                if (status == 2) {
+                    rmq_active = 1;
+                    timerexpired = 1;
+                } else if (status == 1) {
+                    timerexpired = 1;
                 }
                 if (timerexpired) {
                     break;
@@ -1125,20 +1132,22 @@ static void *run_pcap_thread(void *params) {
 
         /* Drain multiple batches after one wake-up. A monotonic time budget
          * keeps the thread responsive to control, rotation and halt events. */
-        drain_started = monotonic_now_ns();
-        do {
-            drain_result = consume_pcap_packets(pstate.rawip_handover,
-                    &pstate);
-            if (drain_result <= 0) {
-                break;
-            }
+        if (rmq_active && !is_halted) {
+            drain_started = monotonic_now_ns();
+            do {
+                drain_result = consume_pcap_packets(pstate.rawip_handover,
+                        &pstate);
+                if (drain_result <= 0) {
+                    break;
+                }
 
-            drain_now = monotonic_now_ns();
-            if (drain_started != 0 && drain_now != 0 &&
-                    drain_now - drain_started >= PCAP_DRAIN_BUDGET_NS) {
-                break;
-            }
-        } while (1);
+                drain_now = monotonic_now_ns();
+                if (drain_started != 0 && drain_now != 0 &&
+                        drain_now - drain_started >= PCAP_DRAIN_BUDGET_NS) {
+                    break;
+                }
+            } while (1);
+        }
 
         halt_openli_timer(state->timerev);
     }
