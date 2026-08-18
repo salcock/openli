@@ -648,7 +648,7 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx,
      * whole record and trust that downstream will figure out how to deal
      * with any duplication.
      */
-    dest->buffer.partialfront = 0;
+    rewind_export_buffer(&(dest->buffer));
     return sockfd;
 }
 
