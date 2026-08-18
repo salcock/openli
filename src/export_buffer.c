@@ -120,7 +120,22 @@ uint8_t *get_buffered_head(export_buffer_t *buf, uint64_t *rem) {
 }
 
 void reset_export_buffer(export_buffer_t *buf) {
-    release_export_buffer(buf);
+    export_block_t *blk;
+    uint64_t rem = 0;
+
+    if (buf == NULL || buf->head == NULL) {
+        return;
+    }
+
+    buf->reader = buf->head;
+
+    for (blk = buf->head; blk != NULL; blk = blk->next) {
+        blk->read_pos = blk->dead_pos;
+        rem += (blk->write_pos - blk->read_pos);
+    }
+    buf->total_buffered = rem;
+    buf->retained_sent_bytes = 0;
+
 }
 
 void rewind_export_buffer(export_buffer_t *buf) {
