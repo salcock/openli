@@ -112,6 +112,9 @@ uint64_t get_buffered_amount(export_buffer_t *buf) {
 }
 
 uint8_t *get_buffered_head(export_buffer_t *buf, uint64_t *rem) {
+    if (buf->reader == NULL) {
+        return NULL;
+    }
     *rem = (buf->reader->write_pos - buf->reader->read_pos);
     if (*rem == 0) {
         return NULL;
