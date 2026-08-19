@@ -843,7 +843,13 @@ static int encode_templated_epscc(openli_encoder_t *enc,
         return -1;
     }
 
-    wandder_decode_sequence_until(dec, 6); // EPSCC-PDU
+    wandder_decode_next(dec);   // Payload
+    wandder_decode_next(dec);   // cCPayloadSequence
+    wandder_decode_next(dec);   // sequence
+    wandder_decode_next(dec);   // payloadDirection
+    wandder_decode_next(dec);   // ccContents
+    wandder_decode_next(dec);   // EPSCC-PDU
+
     while (wandder_decode_next(dec) > 0) {
         if (wandder_get_identifier(dec) == 5) {
             seen_seqno = 1;
