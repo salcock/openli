@@ -1533,12 +1533,16 @@ static int handle_epoll_event(openli_encoder_t *enc, struct epoll_event *ev) {
 
     openli_epoll_ev_t *mev = (openli_epoll_ev_t *)(ev->data.ptr);
     int ret = 0;
+    uint64_t val;
 
     switch(mev->fdtype) {
         case OPENLI_EPOLL_ENCODING_CONTROL:
             // Time to halt the worker
             return -1;
         case OPENLI_EPOLL_ZMQ_YIELD:
+            ret = read(enc->yield_fd, &val, sizeof(val));
+            ret = process_job(enc, enc->zmq_recvjob);
+            break;
         case OPENLI_EPOLL_ENCODING_JOB:
             ret = process_job(enc, enc->zmq_recvjob);
             break;
