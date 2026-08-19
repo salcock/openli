@@ -34,8 +34,10 @@ openli (1.1.21-1) unstable; urgency=medium
   * Mediator: improved performance of collector receiver threads through
     more efficient and dynamic management of intercept records held in
     memory.
+  * Fix death spiral that can occur if a collector or mediator has to expand
+    an export buffer to accommodate a large volume of traffic.
 
- -- Shane Alcock <salcock@searchlight.nz>  Tue, 18 Aug 2026 10:55:20 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 19 Aug 2026 13:55:04 +1200
 
 openli (1.1.20-1) unstable; urgency=medium
 
