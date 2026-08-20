@@ -152,17 +152,21 @@ void rewind_export_buffer(export_buffer_t *buf) {
     Word_t index;
     uint32_t amount = 0;
 
-    if (buf == NULL || buf->reader == NULL) {
+    if (buf == NULL || buf->reader == NULL ||
+            buf->reader->read_pos == buf->reader->write_pos) {
         return;
     }
 
     index = (Word_t)buf->reader->read_pos;
-    J1P(rcint, buf->reader->record_offsets, index);
+    J1T(rcint, buf->reader->record_offsets, index);
+    if (rcint == 0) {
+        J1P(rcint, buf->reader->record_offsets, index);
 
-    if (rcint != 0) {
-        amount = buf->reader->read_pos - (uint32_t)index;
-        buf->reader->read_pos = (uint32_t)index;
-        buf->total_buffered += amount;
+        if (rcint != 0) {
+            amount = buf->reader->read_pos - (uint32_t)index;
+            buf->reader->read_pos = (uint32_t)index;
+            buf->total_buffered += amount;
+        }
     }
 }
 
