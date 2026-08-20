@@ -56,7 +56,6 @@ static export_block_t *create_export_block(void) {
         return NULL;
     }
     J1S(rcint, block->record_offsets, 0);
-    block->since_last_saved_offset = 0;
 
     return block;
 }
@@ -112,6 +111,13 @@ uint64_t get_buffered_amount(export_buffer_t *buf) {
 }
 
 uint8_t *get_buffered_head(export_buffer_t *buf, uint64_t *rem) {
+
+    while (buf->reader != NULL &&
+            buf->reader->read_pos == buf->reader->write_pos &&
+            buf->reader != buf->tail) {
+        buf->reader = buf->reader->next;
+    }
+
     if (buf->reader == NULL) {
         return NULL;
     }
@@ -190,12 +196,7 @@ uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
 
     memcpy(buf->tail->data + buf->tail->write_pos, (void *)pdustart, pdulen);
 
-    if (buf->tail->since_last_saved_offset + pdulen >= BUF_OFFSET_FREQUENCY) {
-        J1S(rcint, buf->tail->record_offsets, buf->tail->write_pos);
-        buf->tail->since_last_saved_offset = 0;
-    }
-
-    buf->tail->since_last_saved_offset += pdulen;
+    J1S(rcint, buf->tail->record_offsets, buf->tail->write_pos);
     buf->tail->write_pos += pdulen;
     buf->total_buffered += pdulen;
     return (buf->total_buffered);
@@ -236,12 +237,7 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     }
     added += res->msgbody->len;
 
-    if (buf->tail->since_last_saved_offset + added >= BUF_OFFSET_FREQUENCY) {
-        J1S(rcint, buf->tail->record_offsets, start);
-        buf->tail->since_last_saved_offset = 0;
-    }
-
-    buf->tail->since_last_saved_offset += added;
+    J1S(rcint, buf->tail->record_offsets, start);
     buf->total_buffered += added;
     return (buf->total_buffered);
 }
@@ -264,12 +260,7 @@ uint64_t append_heartbeat_to_buffer(export_buffer_t *buf) {
 
     memcpy(buf->tail->data + buf->tail->write_pos, &hbeat, sizeof(hbeat));
 
-    if (buf->tail->since_last_saved_offset + sizeof(hbeat) >=
-            BUF_OFFSET_FREQUENCY) {
-        J1S(rcint, buf->tail->record_offsets, buf->tail->write_pos);
-        buf->tail->since_last_saved_offset = 0;
-    }
-    buf->tail->since_last_saved_offset += sizeof(hbeat);
+    J1S(rcint, buf->tail->record_offsets, buf->tail->write_pos);
     buf->total_buffered += sizeof(hbeat);
     buf->tail->write_pos += sizeof(hbeat);
 
@@ -299,12 +290,24 @@ static inline void post_transmit(export_buffer_t *buf) {
         }
     }
 
+    if (buf->head && buf->head == buf->tail) {
+        if (buf->deadwindow == 0) {
+            buf->head->dead_pos = buf->head->read_pos;
+            buf->retained_sent_bytes = 0;
+        } else if (buf->retained_sent_bytes > buf->deadwindow) {
+            excess = buf->retained_sent_bytes - buf->deadwindow;
+            buf->head->dead_pos += (uint32_t)excess;
+            buf->retained_sent_bytes -= excess;
+        }
+    }
+
 }
 
 int transmit_buffered_records(export_buffer_t *buf, int fd,
         uint64_t bytelimit, SSL *ssl) {
 
     uint64_t total_sent = 0;
+    uint64_t remaining_limit = bytelimit;
 
     while (get_buffered_amount(buf) > 0) {
         uint64_t sent = 0;
@@ -323,13 +326,14 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
             continue;
         }
 
-        if (sent > bytelimit) {
-            index = buf->reader->read_pos + bytelimit;
+        remaining_limit = bytelimit - total_sent;
+        if (sent > remaining_limit) {
+            index = buf->reader->read_pos + remaining_limit;
             J1P(rcint, buf->reader->record_offsets, index);
             if (rcint != 0 && index > buf->reader->read_pos) {
                 sent = (uint64_t) index - buf->reader->read_pos;
             } else {
-                sent = bytelimit;
+                sent = remaining_limit;
             }
         }
 
@@ -367,11 +371,7 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
             /* Partial send, something must have filled up */
         }
 
-        if (buf->deadwindow == 0) {
-            buf->reader->dead_pos = buf->reader->read_pos;
-        } else {
-            buf->retained_sent_bytes += (uint64_t)ret;
-        }
+        buf->retained_sent_bytes += (uint64_t)ret;
 
         if (buf->reader->read_pos == buf->reader->write_pos &&
                 buf->reader != buf->tail) {
@@ -461,6 +461,13 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
     amqp_basic_properties_t props;
     uint32_t unsent;
     struct timeval tv;
+
+    while (buf->reader != NULL &&
+            buf->reader->read_pos == buf->reader->write_pos &&
+            buf->reader != buf->tail) {
+        buf->reader = buf->reader->next;
+    }
+
 
     if (buf->reader == NULL || buf->reader->read_pos >= buf->reader->write_pos)
     {

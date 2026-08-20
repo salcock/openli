@@ -66,7 +66,6 @@ typedef struct export_block {
     uint32_t dead_pos;
 
     Pvoid_t record_offsets;
-    uint64_t since_last_saved_offset;
 
     struct export_block *next;
 } export_block_t;
