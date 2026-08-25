@@ -1207,6 +1207,10 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
         case OPENLI_EXPORT_UMTSIRI:
             ret = encode_templated_umtsiri(enc, job, known, hdr_tplate, res);
             break;
+        case OPENLI_EXPORT_GSM_SMS_IRI:
+            ret = encode_templated_gsmsmsiri(enc->encoder,
+                    &known->encrypt_iri, job, hdr_tplate, res);
+            break;
         case OPENLI_EXPORT_EPSIRI:
             ret = encode_templated_epsiri(enc, job, known, hdr_tplate, res);
             break;
@@ -1282,12 +1286,12 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             ret = 0;
     }
 
+    if (ret <= 0) {
+        return ret;
+    }
     finalize_encoded_result(res, job, enc, known, job->origreq->type,
             job->origreq->destid);
 
-    if (ret < 0) {
-        return ret;
-    }
     return enccount;
 }
 

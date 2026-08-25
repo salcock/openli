@@ -106,7 +106,6 @@ typedef struct openli_sccp_content {
     uint8_t *content;
     uint16_t contentlen;
     struct timeval timestamp;
-    uint32_t opc_xor_dpc;
 } PACKED openli_sccp_content_t;
 
 #define RECVD_PKT recvd.data.packet.lt_pkt

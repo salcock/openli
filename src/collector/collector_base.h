@@ -501,21 +501,28 @@ typedef struct encoder_state {
 typedef struct gsm_invoke_saved {
     int32_t id;
     uint8_t map_opcode;
-    uint8_t msisdn[8];
-    uint8_t msisdn_len;
+    uint8_t sender_msisdn[9];
+    uint8_t sender_msisdn_len;
 
     uint8_t *content;
     uint32_t content_len;
 
     uint8_t tpdu_flags;
-    char *saved_msisdn;
+    uint8_t receiving_msisdn[9];
+    uint8_t receiving_msisdn_len;
 
     uint8_t saved_imsi[8];
 
 } gsm_invoke_saved_t;
 
+typedef struct gsm_tx_key {
+    uint8_t global_title[24];
+    uint8_t gt_len;
+    uint32_t tid;
+} gsm_tx_key_t;
+
 typedef struct gsm_transaction {
-    uint64_t tcap_tid_node_key;
+    gsm_tx_key_t tx_key;
     time_t timestamp;
     uint8_t active_invoke_slots;
     gsm_invoke_saved_t inv_slots[8];
@@ -525,7 +532,8 @@ typedef struct gsm_transaction {
 
 typedef struct imsi_msisdn_mapping {
     uint8_t imsi[8];
-    char msisdn[16];
+    uint8_t msisdn[9];
+    uint8_t msisdn_len;
     time_t ts;
 
     UT_hash_handle hh;

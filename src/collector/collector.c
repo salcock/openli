@@ -1131,9 +1131,10 @@ static void handle_sctp_data_chunks(colthread_local_t *loc,
     uint16_t len;
     libtrace_sctp_data_t *dhdr;
     libtrace_sctp_state_t state;
-    uint8_t *sccp;
-    uint16_t sccp_len = 0;
-    uint32_t opc, dpc, tohash, fwdto;
+    uint8_t *sccp, *tcap, *p;
+    uint16_t sccp_len = 0, tcap_len = 0;
+    uint32_t tid = 0, fwdto;
+    size_t data_offset;
     openli_state_update_t sccpmsg;
 
     memset(&state, 0, sizeof(state));
@@ -1158,19 +1159,69 @@ static void handle_sctp_data_chunks(colthread_local_t *loc,
 
         if (ntohl(dhdr->proto) == 3) {
             sccp = parse_m3ua_header_for_sccp(dchunk, len, &sccp_len,
-                    &opc, &dpc);
+                    NULL, NULL);
         } else if (ntohl(dhdr->proto) == 5) {
             sccp = parse_m2pa_header_for_sccp(dchunk, len, &sccp_len,
-                    &opc, &dpc);
+                    NULL, NULL);
         }
 
-        if (!sccp) {
+        if (!sccp || sccp_len < 5) {
             continue;
         }
 
-        tohash = opc ^ dpc;
-        fwdto = hashlittle(&tohash, sizeof(tohash), 312267023) %
-                loc->sctpq_count;
+        if (*sccp == 0x09) {
+            data_offset = 5 + sccp[4];
+        } else if (*sccp == 0x11) {
+            data_offset = 6 + sccp[5];
+        } else {
+            continue;
+        }
+
+        tcap = sccp + data_offset;
+        tcap_len = sccp_len - data_offset;
+
+        if (tcap_len < 4) {
+            continue;
+        }
+
+        // message type is byte 0
+        p = tcap + 1;
+
+        // length
+        if (*p & 0x80) {
+            p += (*p & 0x7F) + 1;
+        } else {
+            p ++;
+        }
+
+        // 0x62 = begin, 0x64 = end, 0x65 = continue
+        if (tcap[0] == 0x62 || tcap[0] == 0x64 || tcap[0] == 0x65) {
+            uint8_t tag, tag_len, i;
+            while (p < tcap + tcap_len) {
+                tag = *p;
+                tag_len = *(p + 1);
+
+                p += 2;
+
+                // begin, continue == match OTID
+                // end == match DTID
+                /* Note that in practice, some messages sent using a continue
+                 * actually have the "original" TID in the DTID field (e.g
+                 * a dialogueResponse) but I've not yet come across any
+                 * such cases that would affect SMS interception.
+                 */
+                if (((tcap[0] == 0x62 || tcap[0] == 0x65) && tag == 0x48) ||
+                        (tcap[0] == 0x64 && tag == 0x49)) {
+                   for (i = 0; i < tag_len && i < 4; i++) {
+                       tid = (tid << 8) | p[i];
+                   }
+                }
+
+                p += tag_len;
+            }
+        }
+
+        fwdto = hashlittle(&tid, sizeof(tid), 312267023) % loc->sctpq_count;
 
         if (collector_halt) {
             return;
@@ -1180,7 +1231,6 @@ static void handle_sctp_data_chunks(colthread_local_t *loc,
         memcpy(sccpmsg.data.sccp.content, sccp, sccp_len);
         sccpmsg.data.sccp.contentlen = sccp_len;
         sccpmsg.data.sccp.timestamp = trace_get_timeval(pkt);
-        sccpmsg.data.sccp.opc_xor_dpc = tohash;
 
         zmq_send(loc->sctp_worker_queues[fwdto], (void *)&(sccpmsg),
                 sizeof(sccpmsg), 0);

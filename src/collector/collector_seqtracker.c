@@ -89,6 +89,8 @@ static inline char *extract_authcc_from_job(openli_export_recv_t *recvd) {
         case OPENLI_EXPORT_UMTSIRI:
         case OPENLI_EXPORT_EPSIRI:
             return recvd->data.mobiri.authcc;
+        case OPENLI_EXPORT_GSM_SMS_IRI:
+            return recvd->data.gsmsms.authcc;
         case OPENLI_EXPORT_RAW_SYNC:
         case OPENLI_EXPORT_RAW_CC:
         case OPENLI_EXPORT_RAW_IRI:
@@ -115,6 +117,8 @@ static inline char *extract_delivcc_from_job(openli_export_recv_t *recvd) {
             return recvd->data.ipiri.delivcc;
         case OPENLI_EXPORT_IPMMIRI:
             return recvd->data.ipmmiri.delivcc;
+        case OPENLI_EXPORT_GSM_SMS_IRI:
+            return recvd->data.gsmsms.delivcc;
         case OPENLI_EXPORT_UMTSIRI:
         case OPENLI_EXPORT_EPSIRI:
             return recvd->data.mobiri.delivcc;
@@ -140,6 +144,8 @@ static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
             return recvd->data.ipiri.liid;
         case OPENLI_EXPORT_IPMMIRI:
             return recvd->data.ipmmiri.liid;
+        case OPENLI_EXPORT_GSM_SMS_IRI:
+            return recvd->data.gsmsms.liid;
         case OPENLI_EXPORT_UMTSIRI:
         case OPENLI_EXPORT_EPSIRI:
             return recvd->data.mobiri.liid;
@@ -169,6 +175,8 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
             return recvd->data.ipiri.cin;
         case OPENLI_EXPORT_IPMMIRI:
             return recvd->data.ipmmiri.cin;
+        case OPENLI_EXPORT_GSM_SMS_IRI:
+            return recvd->data.gsmsms.cin;
         case OPENLI_EXPORT_UMTSIRI:
         case OPENLI_EXPORT_EPSIRI:
             return recvd->data.mobiri.cin;
@@ -228,6 +236,9 @@ static inline etsili_iri_type_t extract_iritype_from_job(
             break;
         case OPENLI_EXPORT_EPSIRI:
             iritype = recvd->data.mobiri.iritype;
+            break;
+        case OPENLI_EXPORT_GSM_SMS_IRI:
+            iritype = ETSILI_IRI_REPORT;
             break;
         default:
             return ETSILI_IRI_NONE;
@@ -859,6 +870,7 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
                 case OPENLI_EXPORT_RAW_IRI:
                 case OPENLI_EXPORT_IPCC:
                 case OPENLI_EXPORT_EPSCC:
+                case OPENLI_EXPORT_GSM_SMS_IRI:
 					run_encoding_job(seqdata, job);
                     sincepurge ++;
                     break;
