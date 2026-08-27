@@ -260,15 +260,18 @@ wandder_encoded_result_t *encode_umtsiri_body(wandder_encoder_t *encoder,
     jobarray[4] = &(precomputed[OPENLI_PREENCODE_LIID]);
 
     /* timeStamp again (3) -- different format, use UTCTime */
-    jobarray[5] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_3]);
-    wandder_encode_next_preencoded(encoder, jobarray, 6);
 
     if (savedtime) {
+        jobarray[5] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_3]);
+        wandder_encode_next_preencoded(encoder, jobarray, 6);
         wandder_encode_next(encoder, WANDDER_TAG_UTCTIME,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 1,
                 savedtime->itemptr, savedtime->itemlen);
+        END_ENCODED_SEQUENCE(encoder, 1);
+    } else {
+        wandder_encode_next_preencoded(encoder, jobarray, 5);
     }
-    END_ENCODED_SEQUENCE(encoder, 1);
+
 
     /* initiator (4) */
     lookup = UMTSIRI_CONTENTS_INITIATOR;
@@ -912,6 +915,7 @@ void etsili_preencode_static_fields(
     uint32_t iptype_4 = 0, iptype_6 = 1;
     uint32_t ipassign_static = 1, ipassign_dynamic = 2, ipassign_unk = 3;
     uint32_t ippfx_64 = 64, ippfx_48 = 48, ippfx_32 = 32;
+    uint32_t iritype_report = 4;
 
     memset(pendarray, 0, sizeof(wandder_encode_job_t) * OPENLI_PREENCODE_LAST);
 
@@ -1234,6 +1238,12 @@ void etsili_preencode_static_fields(
     p->identifier = 5;
     p->encodeas = WANDDER_TAG_OCTETSTRING;
     wandder_encode_preencoded_value(p, &ippfx_32, sizeof(ippfx_32));
+
+    p = &(pendarray[OPENLI_PREENCODE_IRITYPE_REPORT]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_preencoded_value(p, &iritype_report, sizeof(iritype_report));
 
 }
 

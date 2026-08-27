@@ -87,11 +87,13 @@ openlicollector_SOURCES=collector/collector.c \
                 collector/etsiencoding/ipmmcc.c \
                 collector/etsiencoding/templating.c \
                 collector/etsiencoding/tripayload.c \
+                collector/etsiencoding/gsmsmsiri.c \
                 collector/etsiencoding/epsiri.c collector/epsiri.h \
                 collector/etsiencoding/epscc.c collector/epscc.h \
                 collector/sip_worker.c collector/sip_worker.h \
 				collector/sip_update_state.c \
                 collector/gtp_worker.c collector/gtp_worker.h \
+                collector/sctp_worker.c collector/sctp_worker.h \
 				collector/gtp.h collector/sms_masking.c \
                 collector/location.c collector/location.h \
                 collector/collector_util.c collector/collector_util.h \

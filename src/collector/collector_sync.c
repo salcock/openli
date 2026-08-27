@@ -101,11 +101,13 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->emailcount = glob->email_threads;
     sync->sipcount = glob->sip_threads;
     sync->gtpcount = glob->gtp_threads;
+    sync->sctpcount = glob->sctp_threads;
 
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
     sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
     sync->zmq_emailsocks = calloc(sync->emailcount, sizeof(void *));
     sync->zmq_gtpsocks = calloc(sync->gtpcount, sizeof(void *));
+    sync->zmq_sctpsocks = calloc(sync->sctpcount, sizeof(void *));
     sync->zmq_sipsocks = calloc(sync->sipcount, sizeof(void *));
 
     sync->ctx = glob->sslconf.ctx;
@@ -143,7 +145,10 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
             "inproc://openliemailcontrol_sync", glob->zmq_ctxt, -1);
 
     init_zmq_socket_array(sync->zmq_gtpsocks, sync->gtpcount,
-            "inproc://openligtpcontrol_sync", glob->zmq_ctxt, -1);
+            "inproc://openliGTPcontrol_sync", glob->zmq_ctxt, -1);
+
+    init_zmq_socket_array(sync->zmq_sctpsocks, sync->sctpcount,
+            "inproc://openliSCTPcontrol_sync", glob->zmq_ctxt, -1);
 
     init_zmq_socket_array(sync->zmq_sipsocks, sync->sipcount,
             "inproc://openlisipcontrol_sync", glob->zmq_ctxt, -1);
@@ -350,6 +355,7 @@ void clean_sync_data(collector_sync_t *sync) {
         HALT_THREADS(sync->zmq_sipsocks, sync->sipcount);
         HALT_THREADS(sync->zmq_emailsocks, sync->emailcount);
         HALT_THREADS(sync->zmq_gtpsocks, sync->gtpcount);
+        HALT_THREADS(sync->zmq_sctpsocks, sync->sctpcount);
         HALT_THREADS(sync->zmq_pubsocks, sync->pubsockcount);
         HALT_THREADS(sync->zmq_fwdctrlsocks, sync->forwardcount);
         break;
@@ -362,6 +368,7 @@ void clean_sync_data(collector_sync_t *sync) {
     clear_zmq_socket_array(sync->zmq_emailsocks, sync->emailcount);
     clear_zmq_socket_array(sync->zmq_gtpsocks, sync->gtpcount);
     clear_zmq_socket_array(sync->zmq_pubsocks, sync->pubsockcount);
+    clear_zmq_socket_array(sync->zmq_sctpsocks, sync->sctpcount);
     clear_zmq_socket_array(sync->zmq_fwdctrlsocks, sync->forwardcount);
 
 }
@@ -2995,6 +3002,11 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 if (ret == -1) {
                     return -1;
                 }
+                ret = forward_provmsg_to_workers(sync->zmq_sctpsocks,
+                        sync->sctpcount, provmsg, msglen, msgtype, "SCTP");
+                if (ret == -1) {
+                    return -1;
+                }
                 break;
             case OPENLI_PROTO_NOMORE_INTERCEPTS:
                 disable_unconfirmed_intercepts(sync);
@@ -3005,6 +3017,11 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 }
                 ret = forward_provmsg_to_workers(sync->zmq_gtpsocks,
                         sync->gtpcount, provmsg, msglen, msgtype, "GTP");
+                if (ret == -1) {
+                    return -1;
+                }
+                ret = forward_provmsg_to_workers(sync->zmq_sctpsocks,
+                        sync->sctpcount, provmsg, msglen, msgtype, "SCTP");
                 if (ret == -1) {
                     return -1;
                 }
@@ -3202,6 +3219,8 @@ void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
             NULL, 0, OPENLI_PROTO_DISCONNECT, "email");
     forward_provmsg_to_workers(sync->zmq_gtpsocks, sync->gtpcount,
             NULL, 0, OPENLI_PROTO_DISCONNECT, "GTP");
+    forward_provmsg_to_workers(sync->zmq_sctpsocks, sync->sctpcount,
+            NULL, 0, OPENLI_PROTO_DISCONNECT, "SCTP");
     forward_provmsg_to_workers(sync->zmq_sipsocks, sync->sipcount,
             NULL, 0, OPENLI_PROTO_DISCONNECT, "SIP");
 

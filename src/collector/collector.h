@@ -55,6 +55,7 @@
 #include "email_worker.h"
 #include "gtp_worker.h"
 #include "sip_worker.h"
+#include "sctp_worker.h"
 #include "sipparsing.h"
 #include "x2x3_ingest.h"
 
@@ -89,6 +90,7 @@ enum {
     OPENLI_UPDATE_IMAP = 6,
     OPENLI_UPDATE_POP3 = 7,
     OPENLI_UPDATE_SMS_SIP = 8,
+    OPENLI_UPDATE_SCCP = 9,
 };
 
 typedef struct openli_sip_content {
@@ -99,6 +101,12 @@ typedef struct openli_sip_content {
     int ipfamily;
     struct timeval timestamp;
 } PACKED openli_sip_content_t;
+
+typedef struct openli_sccp_content {
+    uint8_t *content;
+    uint16_t contentlen;
+    struct timeval timestamp;
+} PACKED openli_sccp_content_t;
 
 #define RECVD_PKT recvd.data.packet.lt_pkt
 #define RECVD_PINFO recvd.data.packet.pinfo
@@ -112,6 +120,7 @@ typedef struct openli_state_msg {
             libtrace_packet_t *lt_pkt;
             packet_info_t pinfo;
         } packet;
+        openli_sccp_content_t sccp;
         openli_sip_content_t sip;
     } data;
 
@@ -240,6 +249,9 @@ typedef struct colthread_local {
     /* Number of SIP processing threads that have queues in the above array */
     int sipq_count;
 
+    /* Number of SCTP processing threads */
+    int sctpq_count;
+
     /* Array of message queues to pass packets to the email worker threads */
     void **email_worker_queues;
 
@@ -248,6 +260,9 @@ typedef struct colthread_local {
 
     /* Array of message queues to pass packets to the GTP worker threads */
     void **gtp_worker_queues;
+
+    /* Array of message queues to pass packets to the SCTP worker threads */
+    void **sctp_worker_queues;
 
     /* Current intercepts */
     ipv4_target_t *activeipv4intercepts;
@@ -327,6 +342,7 @@ struct collector_global {
     int email_threads;
     int gtp_threads;
     int sip_threads;
+    int sctp_threads;
 
     void *zmq_encoder_ctrl;
 
@@ -347,6 +363,8 @@ struct collector_global {
     openli_email_worker_t *emailworkers;
     openli_gtp_worker_t *gtpworkers;
     openli_sip_worker_t *sipworkers;
+    openli_sctp_worker_t *sctpworkers;
+
     colthread_local_t *collocals;
     int nextloc;
 
@@ -398,7 +416,7 @@ struct collector_global {
     x_input_t *x_inputs;
     pthread_rwlock_t x_input_mutex;
 
-    
+    gsm_identity_map_t gsm_identity_map;
 
 };
 
