@@ -89,6 +89,10 @@ static inline gsm_invoke_saved_t *get_available_invoke_slot(
 
     int i, freeidx = -1;
 
+    if (invokeid >= 0xFF) {
+        return NULL;
+    }
+
     for (i = 0; i < 8; i++) {
         if (tx->active_invoke_slots & (1 << i)) {
             if (tx->inv_slots[i].id == invokeid) {
@@ -107,6 +111,17 @@ static inline gsm_invoke_saved_t *get_available_invoke_slot(
     return &(tx->inv_slots[freeidx]);
 }
 
+static inline void free_gsm_transaction(gsm_transaction_t *tx) {
+    size_t i;
+
+    for (i = 0; i < 8; i++) {
+        if (tx->inv_slots[i].content) {
+            free(tx->inv_slots[i].content);
+        }
+    }
+    free(tx);
+}
+
 static inline gsm_invoke_saved_t *find_existing_invoke_id(
         gsm_transaction_t *tx, int invokeid, uint8_t remove) {
 
@@ -116,6 +131,10 @@ static inline gsm_invoke_saved_t *find_existing_invoke_id(
     }
 
     if (tx->active_invoke_slots == 0) {
+        return NULL;
+    }
+
+    if (invokeid >= 0xFF) {
         return NULL;
     }
     for (i = 0; i < 8; i++) {
@@ -151,6 +170,10 @@ static gsm_transaction_t *lookup_gsm_transaction(openli_sctp_worker_t *sctp,
 
     gsm_transaction_t *tx = NULL;
     gsm_tx_key_t key;
+
+    if (gtlen == 0) {
+        return NULL;
+    }
 
     memset(&key, 0, sizeof(key));
     key.tid = otid;
@@ -261,6 +284,22 @@ static gsm_identity_record_t *lookup_gsm_identity_map(
     return rec;
 }
 
+static void expire_old_transactions(openli_sctp_worker_t *sctp) {
+    struct timeval tv;
+    gsm_transaction_t *tx, *tmp;
+
+    gettimeofday(&tv, NULL);
+
+    HASH_ITER(hh, sctp->active_transactions, tx, tmp) {
+        if (tv.tv_sec - tx->timestamp < 10) {
+            continue;
+        }
+
+        HASH_DELETE(hh, sctp->active_transactions, tx);
+        free_gsm_transaction(tx);
+    }
+}
+
 static void expire_gsm_identity_map(openli_sctp_worker_t *sctp) {
     struct timeval tv;
     gsm_identity_shard_t *shard;
@@ -288,7 +327,7 @@ static void expire_gsm_identity_map(openli_sctp_worker_t *sctp) {
 
 
 static uint8_t *parse_sccp_for_tcap_tids(uint8_t *sccp, uint16_t len,
-        uint16_t *tcap_len, uint32_t *otid, uint32_t *dtid,
+        uint16_t *tcap_len, uint32_t *otid, uint32_t *dtid, uint8_t *tcaptype,
         struct call_parties *parties, wandder_decoder_t **dec) {
     size_t data_offset, i, called_offset, calling_offset;
     size_t calling_len, called_len;
@@ -297,6 +336,7 @@ static uint8_t *parse_sccp_for_tcap_tids(uint8_t *sccp, uint16_t len,
     uint8_t is_gsm = 0;
     uint16_t level = 0xFFFF;
 
+    *tcaptype = 0;
     if (sccp == NULL || len < 5) {
         return NULL;
     }
@@ -334,6 +374,7 @@ static uint8_t *parse_sccp_for_tcap_tids(uint8_t *sccp, uint16_t len,
 
     tcap = sccp + data_offset;
     len -= data_offset;
+    *tcaptype = *tcap;
     *otid = 0;
     *dtid = 0;
     *tcap_len = len;
@@ -1103,30 +1144,33 @@ static void record_mt_sms_tpdu(openli_sctp_worker_t *sctp, uint8_t *tpdu,
 }
 
 static void parse_gsm_mobile_application(openli_sctp_worker_t *sctp,
-        wandder_decoder_t *dec, uint32_t otid, uint32_t dtid,
+        wandder_decoder_t *dec, uint32_t otid, uint32_t dtid, uint8_t tcaptype,
         struct call_parties *parties, struct timeval tv) {
 
-    uint8_t invokeid, opcode, class, component_type;
-    uint32_t length, ident;
+    uint8_t invokeid, opcode, class;
+    uint32_t length, ident, component_type;
     uint8_t *itemptr;
     gsm_transaction_t *tx = NULL;
     gsm_invoke_saved_t *invoke = NULL;
     uint8_t *globaltitle = NULL;
     uint8_t gtlen = 0;
 
-    (void)dtid;
-
     component_type = wandder_get_identifier(dec);
+    if (component_type == 0xFFFFFFFF) {
+        goto endgsm;
+    }
 
     GSM_NEXT_DECODE(dec);
-    if (length != 1 || class != WANDDER_CLASS_UNIVERSAL_PRIMITIVE ||
-            ident != WANDDER_TAG_INTEGER) {
-        return;
+    if (length == 1 && class == WANDDER_CLASS_UNIVERSAL_PRIMITIVE &&
+            ident == WANDDER_TAG_INTEGER) {
+        invokeid = *itemptr;
+    } else {
+        invokeid = 0xFF;
     }
-    invokeid = *itemptr;
 
     if (component_type == 1) {
         // INVOKE
+        // We need to use the caller for GT, not the callee
         globaltitle = parties->calling;
         gtlen = parties->calling_len;
 
@@ -1152,6 +1196,8 @@ static void parse_gsm_mobile_application(openli_sctp_worker_t *sctp,
             if (ident == 0) {
                 // MSISDN
                 SAVE_INVOKE
+                if (!invoke) return;
+
                 if (length > sizeof(invoke->receiving_msisdn)) {
                     length = sizeof(invoke->receiving_msisdn);
                 }
@@ -1243,7 +1289,7 @@ static void parse_gsm_mobile_application(openli_sctp_worker_t *sctp,
         globaltitle = parties->called;
         gtlen = parties->called_len;
         RECALL_INVOKE
-        if (!invoke) return;
+        if (!invoke) goto endgsm;
         opcode = invoke->map_opcode;
 
         if (wandder_decode_next(dec) > 0) {
@@ -1289,27 +1335,59 @@ static void parse_gsm_mobile_application(openli_sctp_worker_t *sctp,
                     &tv);
         }
 
+    } else if (component_type == 3 || component_type == 4) {
+        /* returnError, or reject -- both are functionally the same from
+         * our perspective. A reject may not have a usable invoke ID to
+         * match against the original request, but we can hopefully find the
+         * transaction */
+        globaltitle = parties->called;
+        gtlen = parties->called_len;
+        RECALL_INVOKE
+        if (!invoke) goto endgsm;
+        opcode = invoke->map_opcode;
+
+        if (opcode == 44 || opcode == 46) {
+            // forwardSM or mo-forwardSM
+            // message failed to send, but we still can generate an IRI if
+            // either party matches an intercept target
+            sctp_intercept_sms_ifrequired(sctp, invoke,
+                    OPENLI_GSMSMS_TRANSFER_FAIL, &(tx->tx_key), &tv);
+        }
+
     }
 
-
+endgsm:
+    if (tx && (tcaptype == 0x64 || component_type == 2 || component_type == 3 ||
+            component_type == 4)) {
+        // transaction is (effectively) over, we can free the transaction state
+        HASH_DELETE(hh, sctp->active_transactions, tx);
+        free_gsm_transaction(tx);
+    }
 
 }
 
 static void process_sccp_content(openli_sctp_worker_t *sctp,
         openli_sccp_content_t *sccp) {
 
-    uint8_t *tcap;
+    uint8_t *tcap, tcaptype;
     uint16_t tcap_len;
     uint32_t otid, dtid;
     wandder_decoder_t *dec = NULL;
     struct call_parties parties;
 
     memset(&parties, 0, sizeof(parties));
-
     tcap = parse_sccp_for_tcap_tids(sccp->content, sccp->contentlen,
-            &tcap_len, &otid, &dtid, &parties, &dec);
-    if (tcap != NULL) {
-        parse_gsm_mobile_application(sctp, dec, otid, dtid, &parties,
+            &tcap_len, &otid, &dtid, &tcaptype, &parties, &dec);
+    if (tcaptype == 0x67) {
+        // Abort
+        gsm_transaction_t *tx = lookup_gsm_transaction(sctp, dtid,
+                parties.called, parties.called_len, 0, 0);
+        if (tx) {
+            HASH_DELETE(hh, sctp->active_transactions, tx);
+            free_gsm_transaction(tx);
+        }
+    } else if (tcap != NULL) {
+        parse_gsm_mobile_application(sctp, dec, otid, dtid, tcaptype, &parties,
                 sccp->timestamp);
     }
 
@@ -1419,10 +1497,11 @@ void sctp_worker_main(openli_sctp_worker_t *sctp) {
             close(topoll[2].fd);
 
             // clear transactions that have not been active for 10 seconds
+            expire_old_transactions(sctp);
 
             // once per hour, clear IMSI mappings that have not been seen
             // for a day
-            if (purgetriggers > 10) {
+            if (purgetriggers > 360) {
                 if (sctp->workerid == 0) {
                     expire_gsm_identity_map(sctp);
                 }
@@ -1440,19 +1519,14 @@ void sctp_worker_main(openli_sctp_worker_t *sctp) {
 
 }
 
+
 static void clear_transaction_map(openli_sctp_worker_t *sctp) {
 
     gsm_transaction_t *tx, *tmp;
-    size_t i;
 
     HASH_ITER(hh, sctp->active_transactions, tx, tmp) {
         HASH_DELETE(hh, sctp->active_transactions, tx);
-        for (i = 0; i < 8; i++) {
-            if (tx->inv_slots[i].content) {
-                free(tx->inv_slots[i].content);
-            }
-        }
-        free(tx);
+        free_gsm_transaction(tx);
     }
 }
 
