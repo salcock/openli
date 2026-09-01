@@ -143,7 +143,6 @@ void start_mhd_daemon(provision_state_t *state) {
         return;
     }
 
-startnotls:
     state->updatedaemon = MHD_start_daemon(MHD_USE_SELECT_INTERNALLY,
             0,
             NULL,
