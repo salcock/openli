@@ -110,11 +110,13 @@ void start_mhd_daemon(provision_state_t *state) {
     if (state->sslconf.certfile && state->sslconf.keyfile) {
         if (load_pem_into_memory(state->sslconf.keyfile, &(state->key_pem)) < 0)
         {
-            goto startnotls;
+            logger(LOG_INFO, "Failed to load TLS key file into memory. Disabling REST API.");
+            return;
         }
         if (load_pem_into_memory(state->sslconf.certfile, &(state->cert_pem))
                 < 0) {
-            goto startnotls;
+            logger(LOG_INFO, "Failed to load TLS certificate into memory. Disabling REST API.");
+            return;
         }
 
         state->updatedaemon = MHD_start_daemon(

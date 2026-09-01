@@ -2052,6 +2052,11 @@ static int decode_tlv(uint8_t *start, uint8_t *end,
     uint16_t t16 = ntohs(*(uint16_t *)start);
     *t = t16;
 
+    if (start + 2 > end) {
+        logger(LOG_INFO, "OpenLI: truncated TLV (incomplete length field).");
+        return -1;
+    }
+
     start += 2;
     if (start >= end) {
         logger(LOG_INFO, "OpenLI: truncated TLV.");
