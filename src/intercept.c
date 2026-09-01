@@ -106,9 +106,7 @@ void openli_free_encryptkey_ptr(uint8_t **pp, size_t len) {
 int openli_parse_liid_string(char *liidstr, char **storage,
         openli_liid_format_t *fmt, char *errorstring, size_t errorstringsize) {
 
-    if (liidstr == NULL || strlen(liidstr) == 0) {
-        snprintf(errorstring, errorstringsize,
-                "'liid' must be not be null or have zero length");
+    if (validate_openli_liid(liidstr, errorstring, errorstringsize) < 0) {
         return -1;
     }
 

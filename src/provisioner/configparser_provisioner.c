@@ -40,6 +40,7 @@
 
 #include "configparser_common.h"
 #include "configparser_provisioner.h"
+#include "util.h"
 
 
 uint64_t nextid = 0;
@@ -62,8 +63,13 @@ static void add_single_xid(char *srcvalue, intercept_common_t *common) {
 
 static void parse_and_set_liid(intercept_common_t *common,
         const char *liidval) {
+    char errbuf[256];
 
     if (!liidval) return;
+
+    if (validate_openli_liid(liidval, errbuf, sizeof(errbuf)) < 0) {
+        logger(LOG_ERR, "OpenLI provisioner: invalid LIID '%s' in running intercept config: %s", liidval, errbuf);
+    }
 
     // Case 1: begins with 0x, so treat as binary octets
     if (strlen(liidval) > 2 && liidval[0] == '0' &&

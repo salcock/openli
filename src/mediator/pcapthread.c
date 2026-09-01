@@ -101,6 +101,25 @@ static char *stradd(const char *str, char *bufp, char *buflim) {
     return bufp;
 }
 
+static void sanitize_liid_for_filename(const char *src, char *dst, size_t len) {
+    size_t i = 0;
+
+    if (!src || !dst || len == 0) {
+        return;
+    }
+
+    while (src[i] != '\0' && i < len - 1) {
+        char c = src[i];
+        if (c == '/' || c == '\\') {
+            dst[i] = '_';
+        } else {
+            dst[i] = c;
+        }
+        i++;
+    }
+    dst[i] = '\0';
+}
+
 /** Constructs the pcap filename URI for an output file.
  *
  *  @param state            The LEA send thread state for this pcap thread
@@ -122,6 +141,7 @@ static int populate_pcap_uri(lea_thread_state_t *state,
     char scratch[9500];
     char *w = scratch;
     char *end = scratch + urispacelen;
+    char sanitized[256];
 
     /* Build the URI in 'scratch', then copy it into urispace only if we
      * manage to build it successfully
@@ -141,7 +161,9 @@ static int populate_pcap_uri(lea_thread_state_t *state,
                     break;
                 case 'L':
                     /* '%L' is replaced with the LIID for the intercept */
-                    w = stradd(act->liid, w, end);
+                    sanitize_liid_for_filename(act->liid, sanitized,
+                            sizeof(sanitized));
+                    w = stradd(sanitized, w, end);
                     continue;
                 case 's':
                     /* '%s' is replaced with the unix timestamp in seconds */
@@ -238,19 +260,21 @@ static int open_pcap_output_file(lea_thread_state_t *state,
     }
 
     if (state->pcap_outtemplate == NULL) {
+        char sanitized[256];
 
         /* Name the file after the LIID and current timestamp -- this ensures we
          * will have files that have unique and meaningful names, even if we
          * have multiple intercepts that last over multiple rotation periods.
          */
+        sanitize_liid_for_filename(act->liid, sanitized, sizeof(sanitized));
         gettimeofday(&tv, NULL);
 
         if (state->pcap_compress_level > 0) {
             snprintf(uri, 4096, "pcapfile:%s/openli_%s_%lu.pcap.gz",
-                state->pcap_dir, act->liid, tv.tv_sec);
+                state->pcap_dir, sanitized, tv.tv_sec);
         } else {
             snprintf(uri, 4096, "pcapfile:%s/openli_%s_%lu.pcap",
-                state->pcap_dir, act->liid, tv.tv_sec);
+                state->pcap_dir, sanitized, tv.tv_sec);
         }
     } else {
         if (populate_pcap_uri(state, uri, 4096, act) == 0) {
