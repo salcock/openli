@@ -405,14 +405,21 @@ static int consume_available_rmq_records(handover_t *ho,
     /* If we have records in the buffer already, try to send and
      * acknowledge those.
      */
-    if ((r = send_available_rmq_records(ho, state)) == 1) {
-        ho->disconnect_msg = 0;
-        return 0;
-    } else if (r == -2) {
+    r = send_available_rmq_records(ho, state);
+    if (r == -2) {
         reset_handover_rmq(ho);
         return 0;
     } else if (r == -1) {
         return -1;
+    }
+
+    /* There is still data in the buffer, but we can't send any more
+     * right now. Just return and wait for the next EPOLLOUT event to
+     * fire so we know when we can send more.
+     */
+    if (get_buffered_amount(&(ho->ho_state->buf)) > 0) {
+        ho->disconnect_msg = 0;
+        return 0;
     }
 
     r = 0;
