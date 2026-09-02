@@ -126,7 +126,7 @@ static void release_liid_from_forwarder(forwarder_assignment_t *assign,
 }
 
 static int init_worker(openli_encoder_t *enc) {
-    int zero = 0, rto = 10;
+    int zero = 0;
     int hwm = 1000;
     int i, zmq_fd;
     char sockname[128];
@@ -149,11 +149,6 @@ static int init_worker(openli_encoder_t *enc) {
         return -1;
     }
 
-    if (zmq_setsockopt(enc->zmq_recvjob, ZMQ_RCVTIMEO, &rto,
-                sizeof(rto)) != 0) {
-        logger(LOG_INFO, "OpenLI: error configuring connection to zmq pull socket");
-        return -1;
-    }
     if (zmq_connect(enc->zmq_recvjob, sockname) != 0) {
         logger(LOG_INFO, "OpenLI: error connecting to zmq pull socket");
         return -1;
@@ -1375,7 +1370,8 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         openli_encoded_result_t *result = NULL;
 
         memset(&job, 0, sizeof(openli_encoding_job_t));
-        x = zmq_recv(socket, &job, sizeof(openli_encoding_job_t), 0);
+        x = zmq_recv(socket, &job, sizeof(openli_encoding_job_t),
+                ZMQ_DONTWAIT);
         if (x < 0 && (errno != EAGAIN && errno != EINTR)) {
             logger(LOG_INFO,
                     "OpenLI: error reading job in encoder worker %d",
