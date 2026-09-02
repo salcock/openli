@@ -448,6 +448,7 @@ static inline int finalize_encoded_result(openli_encoded_result_t *res,
                 enc->etsidecoder, res->msgbody->encoded + res->preamblen,
                 res->msgbody->len - res->preamblen, job->encryptkey,
                 job->encryptkey_len) == NULL) {
+            logger(LOG_INFO, "OpenLI: unable to encrypt ETSI record (LIID: %s, type: %u) using aes-192-cbc", job->liid, type);
             return -1;
         }
     }
