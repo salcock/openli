@@ -1098,8 +1098,11 @@ static uint32_t release_confirmed_messages(coll_recv_t *col, uint8_t channel,
             q->count --;
             released ++;
 
-            if (!multiple && slot->delivtag == delivery_tag) {
-                return released;
+            if (!multiple) {
+                slot = &(q->slots[q->head]);
+                if (q->count == 0 || slot->delivtag != delivery_tag) {
+                    return released;
+                }
             }
         }
     }
