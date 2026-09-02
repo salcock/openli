@@ -1,5 +1,8 @@
 openli (1.1.21-1) unstable; urgency=medium
 
+  * Add ability to configure specific IP prefixes that should be
+    automatically excluded from IP CC interception (credit for this
+    feature goes to Pawel Jablonski).
   * IMAP: fix segmentation faults due to bad pointer arithmetic in the
     IMAP protocol parser.
   * Email: fix buffer overflow bug when decoding authentication tokens.
@@ -36,8 +39,14 @@ openli (1.1.21-1) unstable; urgency=medium
     memory.
   * Fix death spiral that can occur if a collector or mediator has to expand
     an export buffer to accommodate a large volume of traffic.
+  * Collector: add worker threads for processing packets using SCTP for
+    transport (e.g. SIGTRAN).
+  * Mediator: replace any '/' or '\' characters in an LIID before using the
+    LIID in a pcap output filename.
+  * Collector: fix bug where encrypted intercepts would randomly produce no
+    records for VoIP intercepts.
 
- -- Shane Alcock <salcock@searchlight.nz>  Wed, 19 Aug 2026 13:55:04 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 2 Sep 2026 17:23:10 +1200
 
 openli (1.1.20-1) unstable; urgency=medium
 
