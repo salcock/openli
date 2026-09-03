@@ -15,15 +15,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "util.h"
 #include "patricia.h"
-
-struct openli_cc_prefix_filter {
-    patricia_tree_t *ipv4;
-    patricia_tree_t *ipv6;
-    size_t ipv4_count;
-    size_t ipv6_count;
-    int finalised;
-};
 
 static int family_parameters(int family, uint8_t *maximum_bits,
         size_t *address_length) {
@@ -168,7 +161,7 @@ static openli_cc_prefix_filter_result_t check_existing_prefixes(
     return OPENLI_CC_PREFIX_FILTER_OK;
 }
 
-openli_cc_prefix_filter_t *openli_cc_prefix_filter_create(void) {
+openli_cc_prefix_filter_t *openli_cc_prefix_filter_create(int shared) {
     openli_cc_prefix_filter_t *filter;
 
     filter = calloc(1, sizeof(*filter));
@@ -189,6 +182,7 @@ openli_cc_prefix_filter_t *openli_cc_prefix_filter_create(void) {
         return NULL;
     }
 
+    filter->refcnt = shared;
     return filter;
 }
 
@@ -200,6 +194,20 @@ void openli_cc_prefix_filter_destroy(openli_cc_prefix_filter_t *filter) {
     Destroy_Patricia(filter->ipv4, free);
     Destroy_Patricia(filter->ipv6, free);
     free(filter);
+}
+
+openli_cc_prefix_filter_result_t openli_cc_prefix_filter_add_cidr(
+        openli_cc_prefix_filter_t *filter, char *cidr) {
+    uint8_t address[INET6_ADDRSTRLEN];
+    uint8_t pfxlen;
+    int family;
+
+    if (parse_ipcc_prefix(cide, &family, address, &pfxlen) < 0) {
+        return OPENLI_CC_PREFIX_FILTER_INVALID_ARGUMENT;
+    }
+
+    return openli_cc_prefix_filter_add(filter, family, address,
+            pfxlen, 0);
 }
 
 openli_cc_prefix_filter_result_t openli_cc_prefix_filter_add(

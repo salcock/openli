@@ -392,6 +392,21 @@ endxidcheck:
     return ret;
 }
 
+static int reload_ipcc_prefix_filter_groups(prov_intercept_conf_t *curr,
+        prov_intercept_conf_t *latest) {
+
+    ipcc_prefix_filter_t *flt, *tmp;
+
+    HASH_ITER(hh, curr->ipcc_filters, flt, tmp) {
+        HASH_DELETE(hh, curr->ipcc_filters, flt);
+        destroy_ipcc_prefix_filter(flt);
+    }
+
+    curr->ipcc_filters = latest->ipcc_filters;
+    latest->ipcc_filters = NULL;
+    return 0;
+}
+
 static int reload_leas(provision_state_t *state, prov_intercept_conf_t *curr,
         prov_intercept_conf_t *latest) {
 
@@ -927,6 +942,7 @@ static int reload_ipintercepts(provision_state_t *currstate,
                     newequiv->common.targetagency);
             int encryptchanged = compare_intercept_encrypt_configuration(
                     &(ipint->common), &(newequiv->common));
+            int pfxfilterchanged = compare_ipcc_prefix_filters(ipint, newequiv);
 
             HASH_FIND(hh, intconf->leas, newequiv->common.targetagency,
                     strlen(newequiv->common.targetagency), lea);
@@ -953,7 +969,8 @@ static int reload_ipintercepts(provision_state_t *currstate,
 
             if (update_reconfigured_intercept(currstate, &(ipint->common),
                     &(newequiv->common), intconf,
-                    (!intsame || staticchanged || udpsinkchanged),
+                    (!intsame || staticchanged || udpsinkchanged ||
+                            pfxfilterchanged),
                     agencychanged, encryptchanged, droppedmeds, ipint->username,
                     newequiv->username) < 0) {
                 return -1;
@@ -1080,6 +1097,11 @@ static int reload_intercept_config(provision_state_t *currstate,
         {
             return -1;
         }
+    }
+
+    if (reload_ipcc_prefix_filter_groups(&(currstate->interceptconf),
+            &(newconf)) < 0) {
+        return -1;
     }
 
 	if (reload_voipintercepts(currstate,

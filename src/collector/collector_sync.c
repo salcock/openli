@@ -1974,6 +1974,41 @@ static void push_existing_user_sessions(collector_sync_t *sync,
 
 }
 
+static openli_cc_prefix_filter_t *construct_openli_cc_prefix_filter(
+        ipintercept_t *cept, int colqueues) {
+
+    openli_cc_prefix_filter_t *tries;
+    size_t i;
+    openli_cc_prefix_filter_result_t res;
+
+    tries = openli_cc_prefix_filter_create(1 + colqueues);
+    for (i = 0; i < cept->cc_exclude_count; i++) {
+        res = openli_cc_prefix_filter_add_cidr(tries, cept->cc_exclude_cidrs[i]);
+        if (res == OPENLI_CC_PREFIX_FILTER_DUPLICATE) {
+            continue;
+        }
+        if (res != OPENLI_CC_PREFIX_FILTER_OK) {
+            logger(LOG_INFO,
+                    "OpenLI collector: unable to add IPCC filter prefix '%s' to LIID %s: %s",
+                    cept->cc_exclude_cidrs[i], cept->common.liid,
+                    openli_cc_prefix_filter_result_string(res));
+            openli_cc_prefix_filter_destroy(tries);
+            return NULL;
+        }
+    }
+
+    if (openli_cc_prefix_filter_finalise(tries) != OPENLI_CC_PREFIX_FILTER_OK) {
+        logger(LOG_INFO,
+                "OpenLI collector: unable to finalise IPCC filter for LIID %s: %s",
+                cept->common.liid,
+                openli_cc_prefix_filter_result_string(res));
+        openli_cc_prefix_filter_destroy(tries);
+        return NULL;
+    }
+
+    return tries;
+}
+
 static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
 
     openli_export_recv_t *expmsg;
@@ -2025,6 +2060,14 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
     expmsg = create_intercept_details_msg(&(cept->common),
             OPENLI_INTERCEPT_TYPE_IP);
     publish_openli_msg(sync->zmq_pubsocks[cept->common.seqtrackerid], expmsg);
+
+    if (cept->cc_exclude_count > 0) {
+        cept->cc_exclude_tries = construct_openli_cc_prefix_filter(cept);
+        if (cept->cc_exclude_tries) {
+            // TODO push to collector queues */
+
+        }
+    }
 
     if (cept->username) {
         push_existing_user_sessions(sync, cept);
@@ -2776,11 +2819,6 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
                     "OpenLI: received invalid IP intercept from provisioner.");
         }
         free(cept);
-        return -1;
-    }
-
-    if (resolve_ipintercept_cc_exclude_mask(sync, cept) < 0) {
-        free_single_ipintercept(cept);
         return -1;
     }
 

@@ -265,6 +265,26 @@ int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
 
 }
 
+void destroy_ipcc_prefix_filter(ipcc_prefix_filter_t *pfxflt) {
+    uint32_t i;
+
+    if (!pfxflt) return;
+
+    if (pfxflt->pfx_cidrs) {
+        for (i = 0; i < pfxflt->pfx_count; i++) {
+            if (pfxflt->pfx_cidrs[i]) {
+                free(pfxflt->pfx_cidrs[i]);
+            }
+        }
+        free(pfxflt->pfx_cidrs);
+    }
+    if (pfxflt->group_name) {
+        free(pfxflt->group_name);
+    }
+    free(pfxflt);
+}
+
+
 static void free_openli_mediator(openli_mediator_t *med) {
     if (!med) {
         return;
@@ -740,6 +760,7 @@ void clear_intercept_state(prov_intercept_conf_t *conf) {
     prov_agency_t *h2, *tmp2;
     default_radius_user_t *h3, *tmp3;
     udp_sink_intercept_mapping_t *h4, *tmp4;
+    ipcc_prefix_filter_t *flt, *fltmp;
 
     pthread_mutex_lock(&(conf->safelock));
     conf->destroy_pending = 1;
@@ -748,6 +769,11 @@ void clear_intercept_state(prov_intercept_conf_t *conf) {
     HASH_ITER(hh, conf->liid_map, h, tmp) {
         HASH_DEL(conf->liid_map, h);
         free(h);
+    }
+
+    HASH_ITER(hh, conf->ipcc_filters, flt, fltmp) {
+        HASH_DELETE(hh, conf->ipcc_filters, flt);
+        destroy_ipcc_prefix_filter(flt);
     }
 
     HASH_ITER(hh, conf->defradusers, h3, tmp3) {
@@ -784,6 +810,7 @@ void clear_intercept_state(prov_intercept_conf_t *conf) {
     free_coreserver_list(conf->imapservers);
     free_coreserver_list(conf->pop3servers);
     free_coreserver_list(conf->sipservers);
+
 
     pthread_mutex_destroy(&(conf->safelock));
 }

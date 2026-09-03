@@ -35,6 +35,8 @@
 #include <Judy.h>
 #include <uuid/uuid.h>
 
+#include "patricia.h"
+
 #define ETSI_DIR_FROM_TARGET 0
 #define ETSI_DIR_TO_TARGET 1
 #define ETSI_DIR_INDETERMINATE 2
@@ -220,6 +222,15 @@ typedef struct intercept_udp_sink {
 
 } intercept_udp_sink_t;
 
+typedef struct cc_exclude_tries {
+    patricia_tree_t *v4;
+    patricia_tree_t *v6;
+    size_t ipv4_count;
+    size_t ipv6_count;
+    int finalised;
+    _Atomic int refcnt;
+} openli_cc_prefix_filter_t;
+
 typedef struct ipintercept {
     intercept_common_t common;
 
@@ -242,7 +253,11 @@ typedef struct ipintercept {
 
     char **cc_exclude_groups;
     size_t cc_exclude_group_count;
-    uint64_t cc_exclude_mask;
+
+    char **cc_exclude_cidrs;
+    size_t cc_exclude_count;
+
+    openli_cc_prefix_filter_t *cc_exclude_tries;
 
     openli_mobile_identifier_t mobileident;
     uint8_t awaitingconfirm;
@@ -571,15 +586,15 @@ struct ipsession {
     uint8_t prefixlen;
     uint32_t nextseqno;
     internet_access_method_t accesstype;
-    uint64_t cc_exclude_mask;
 
+    openli_cc_prefix_filter_t *cc_exclude_tries;
     intercept_common_t common;
     UT_hash_handle hh;
 };
 
 struct vendmirror_intercept {
     uint32_t sessionid;
-    uint64_t cc_exclude_mask;
+    openli_cc_prefix_filter_t *cc_exclude_tries;
     intercept_common_t common;
     UT_hash_handle hh;
 };
@@ -597,7 +612,7 @@ struct staticipsession {
     uint32_t cin;
     uint32_t nextseqno;
     uint32_t references;
-    uint64_t cc_exclude_mask;
+    openli_cc_prefix_filter_t *cc_exclude_tries;
     UT_hash_handle hh;
 };
 
@@ -630,8 +645,8 @@ void free_single_voip_cinmap_entry(voipcinmap_t *c);
 void free_voip_cinmap(voipcinmap_t *cins);
 void free_single_ipintercept(ipintercept_t *cept);
 void clear_ipintercept_cc_exclude_groups(ipintercept_t *cept);
-int add_ipintercept_cc_exclude_group(ipintercept_t *cept,
-        const char *group, size_t group_len);
+int add_ipintercept_cc_exclude_cidr(ipintercept_t *cept, char *cidr);
+int add_ipintercept_cc_exclude_group_name(ipintercept_t *cept, char *group);
 size_t ipintercept_cc_exclude_encoded_length(const ipintercept_t *cept);
 void free_single_voipintercept(voipintercept_t *v);
 void free_single_emailintercept(emailintercept_t *m);
@@ -643,6 +658,7 @@ void free_single_staticipsession(staticipsession_t *statint);
 void free_single_staticiprange(static_ipranges_t *ipr);
 void free_single_email_target(email_target_t *tgt);
 
+int compare_ipcc_prefix_filters(ipintercept_t *a, ipintercept_t *b);
 int compare_intercept_encrypt_configuration(intercept_common_t *a,
         intercept_common_t *b);
 int compare_xid_list(intercept_common_t *a, intercept_common_t *b);

@@ -1726,7 +1726,8 @@ sinkerr:
 }
 
 static int parse_ipintercept_cc_exclude_groups(ipintercept_t *ipint,
-        struct json_object *groups, update_con_info_t *cinfo) {
+        struct json_object *groups, update_con_info_t *cinfo,
+        prov_intercept_conf_t *state) {
     size_t i;
     size_t count;
 
@@ -1748,6 +1749,8 @@ static int parse_ipintercept_cc_exclude_groups(ipintercept_t *ipint,
     for (i = 0; i < count; i++) {
         struct json_object *entry = json_object_array_get_idx(groups, i);
         const char *name;
+        size_t j;
+        ipcc_prefix_filter_t *found;
 
         if (!json_object_is_type(entry, json_type_string)) {
             snprintf(cinfo->answerstring, 4096,
@@ -1756,13 +1759,37 @@ static int parse_ipintercept_cc_exclude_groups(ipintercept_t *ipint,
             return -1;
         }
         name = json_object_get_string(entry);
-        if (name == NULL || name[0] == '\0' ||
-                add_ipintercept_cc_exclude_group(ipint, name,
-                        strlen(name)) < 0) {
+        if (name == NULL || name[0] == '\0') {
             snprintf(cinfo->answerstring, 4096,
                     "%s <p>cc_exclude_groups contains an empty or duplicate group name. %s",
                     update_failure_page_start, update_failure_page_end);
             return -1;
+        }
+
+        HASH_FIND(hh, state->ipcc_filters, name, strlen(name), found);
+        if (!found) {
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>IPCC prefix filter group '%s' is not declared on this provisioner. %s",
+                    update_failure_page_start, name, update_failure_page_end);
+            return -1;
+        }
+
+        if (add_ipintercept_cc_exclude_group_name(ipint, (char *)name) < 0) {
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>Error while attaching IPCC prefix filter group '%s'. %s",
+                    update_failure_page_start, name, update_failure_page_end);
+            return -1;
+        }
+
+
+        for (j = 0; j < found->pfx_count; j++) {
+            if (add_ipintercept_cc_exclude_cidr(ipint, found->pfx_cidrs[j]) < 0) {
+                snprintf(cinfo->answerstring, 4096,
+                        "%s <p>Error while attaching IPCC prefix filter group '%s,%s'. %s",
+                        update_failure_page_start, name, found->pfx_cidrs[j],
+                        update_failure_page_end);
+                return -1;
+            }
         }
     }
     return 0;
@@ -2235,7 +2262,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (ipjson.cc_exclude_groups != NULL &&
             parse_ipintercept_cc_exclude_groups(ipint,
-                    ipjson.cc_exclude_groups, cinfo) < 0) {
+                    ipjson.cc_exclude_groups, cinfo, &(state->interceptconf)) < 0) {
         goto cepterr;
     }
 
@@ -2867,7 +2894,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (ipjson.cc_exclude_groups != NULL &&
             parse_ipintercept_cc_exclude_groups(ipint,
-                    ipjson.cc_exclude_groups, cinfo) < 0) {
+                    ipjson.cc_exclude_groups, cinfo, &(state->interceptconf)) < 0) {
         goto cepterr;
     }
 
@@ -3089,6 +3116,10 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         found->cc_exclude_group_count = ipint->cc_exclude_group_count;
         ipint->cc_exclude_groups = NULL;
         ipint->cc_exclude_group_count = 0;
+        found->cc_exclude_cidrs = ipint->cc_exclude_cidrs;
+        found->cc_exclude_count = ipint->cc_exclude_count;
+        ipint->cc_exclude_cidrs = NULL;
+        ipint->cc_exclude_count = 0;
         changed = 1;
     }
 
