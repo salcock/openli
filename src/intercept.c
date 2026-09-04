@@ -31,6 +31,7 @@
 #include "logger.h"
 #include "intercept.h"
 #include "configparser_common.h"
+#include "collector/cc_prefix_filter.h"
 
 const char *cepttype_strings[] =
         {"Unknown", "IP", "VoIP", "Email"};
@@ -836,6 +837,9 @@ void free_single_ipintercept(ipintercept_t *cept) {
 
     free_all_staticipranges(&(cept->statics));
     clear_ipintercept_cc_exclude_groups(cept);
+    if (cept->cc_exclude_tries) {
+        openli_cc_prefix_filter_release(cept->cc_exclude_tries);
+    }
     free(cept);
 }
 

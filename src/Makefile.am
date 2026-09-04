@@ -23,10 +23,11 @@ openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
                 provisioner/updateserver_jsoncreation.c \
                 provisioner/hup_reload.c \
 				provisioner/clientdb.c provisioner/integrity_sign.c \
-                provisioner/intercept_timers.c provisioner/intercept_timers.h
+                provisioner/intercept_timers.c provisioner/intercept_timers.h \
+                collector/cc_prefix_filter.c collector/cc_prefix_filter.h
 
-openliprovisioner_LDFLAGS = -lpthread @PROVISIONER_LIBS@
-openliprovisioner_LDADD = @ADD_LIBS@
+openliprovisioner_LDFLAGS = -lpthread -lpatricia @PROVISIONER_LIBS@
+openliprovisioner_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs
 openliprovisioner_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ @PROVISIONER_CFLAGS@ -Werror -Wall -Wextra
 
 dist_sbin_SCRIPTS += provisioner/authsetup/openli-prov-authsetup.sh \

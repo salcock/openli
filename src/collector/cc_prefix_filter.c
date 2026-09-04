@@ -161,8 +161,12 @@ static openli_cc_prefix_filter_result_t check_existing_prefixes(
     return OPENLI_CC_PREFIX_FILTER_OK;
 }
 
-openli_cc_prefix_filter_t *openli_cc_prefix_filter_create(int shared) {
+openli_cc_prefix_filter_t *openli_cc_prefix_filter_create(char *liid,
+        int shared) {
     openli_cc_prefix_filter_t *filter;
+    if (liid == NULL) {
+        return NULL;
+    }
 
     filter = calloc(1, sizeof(*filter));
     if (filter == NULL) {
@@ -182,6 +186,7 @@ openli_cc_prefix_filter_t *openli_cc_prefix_filter_create(int shared) {
         return NULL;
     }
 
+    filter->liid = strdup(liid);
     filter->refcnt = shared;
     return filter;
 }
@@ -191,9 +196,20 @@ void openli_cc_prefix_filter_destroy(openli_cc_prefix_filter_t *filter) {
         return;
     }
 
+    if (filter->liid) free(filter->liid);
     Destroy_Patricia(filter->ipv4, free);
     Destroy_Patricia(filter->ipv6, free);
     free(filter);
+}
+
+void openli_cc_prefix_filter_release(openli_cc_prefix_filter_t *filter) {
+    if (filter == NULL) {
+        return;
+    }
+
+    if (__atomic_sub_fetch(&(filter->refcnt), 1, __ATOMIC_ACQ_REL) == 0) {
+        openli_cc_prefix_filter_destroy(filter);
+    }
 }
 
 openli_cc_prefix_filter_result_t openli_cc_prefix_filter_add_cidr(
@@ -202,7 +218,7 @@ openli_cc_prefix_filter_result_t openli_cc_prefix_filter_add_cidr(
     uint8_t pfxlen;
     int family;
 
-    if (parse_ipcc_prefix(cide, &family, address, &pfxlen) < 0) {
+    if (parse_ipcc_prefix(cidr, &family, address, &pfxlen) < 0) {
         return OPENLI_CC_PREFIX_FILTER_INVALID_ARGUMENT;
     }
 

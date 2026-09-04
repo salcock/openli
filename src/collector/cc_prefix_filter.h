@@ -16,6 +16,8 @@
 #include <stdint.h>
 #include <sys/socket.h>
 
+#include "intercept.h"
+
 #define OPENLI_CC_PREFIX_FILTER_MAX_GROUPS 64
 
 typedef enum openli_cc_prefix_filter_result {
@@ -35,7 +37,8 @@ typedef enum openli_cc_prefix_filter_result {
  * reference count (i.e. the number of threads that will have
  * access to this set of filters.
  */
-openli_cc_prefix_filter_t *openli_cc_prefix_filter_create(int shared);
+openli_cc_prefix_filter_t *openli_cc_prefix_filter_create(char *liid,
+        int shared);
 
 /*
  * Destroy the filter group, regardless of its reference count. Do NOT

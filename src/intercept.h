@@ -223,12 +223,13 @@ typedef struct intercept_udp_sink {
 } intercept_udp_sink_t;
 
 typedef struct cc_exclude_tries {
-    patricia_tree_t *v4;
-    patricia_tree_t *v6;
+    patricia_tree_t *ipv4;
+    patricia_tree_t *ipv6;
     size_t ipv4_count;
     size_t ipv6_count;
     int finalised;
-    _Atomic int refcnt;
+    int refcnt;
+    char *liid;
 } openli_cc_prefix_filter_t;
 
 typedef struct ipintercept {
