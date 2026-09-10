@@ -35,7 +35,6 @@ save_original_packages() {
 
 case "$1" in
     configure)
-        mkdir -p /var/run/openli
 
         adduser --quiet --system --group --no-create-home \
                 --home /etc/openli ${USER}
@@ -49,7 +48,7 @@ case "$1" in
         if systemctl is-active --quiet "rabbitmq-server"; then
             echo ""
         else
-            service rabbitmq-server start
+            systemctl start rabbitmq-server
         fi
 
         EXISTS=`rabbitmqctl list_vhosts | grep "^OpenLI-med$" | wc -l`
@@ -83,7 +82,7 @@ EOF
                 chown rabbitmq:rabbitmq /etc/rabbitmq/rabbitmq.conf
             fi
         fi
-        service rabbitmq-server restart
+        systemctl restart rabbitmq-server
 
         ;;
     abort-upgrade|abort-remove|abort-deconfigure)

@@ -13,7 +13,7 @@ Homepage: https://openli.nz
 Package: openli-provisioner
 Section: net
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, lsb-base, sqlcipher,
+Depends: ${shlibs:Depends}, ${misc:Depends}, sqlcipher,
     bash, adduser, procps
 Description: Central provisioning daemon for an OpenLI system
  OpenLI is a software suite that allows network operators to conduct
@@ -29,7 +29,7 @@ Description: Central provisioning daemon for an OpenLI system
 Package: openli-mediator
 Section: net
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, lsb-base, adduser,
+Depends: ${shlibs:Depends}, ${misc:Depends}, adduser,
     rabbitmq-server, procps, libwandder2 (>=2.0.21)
 Recommends: strongswan
 Description: Mediation daemon for an OpenLI system
@@ -46,7 +46,7 @@ Description: Mediation daemon for an OpenLI system
 Package: openli-collector
 Section: net
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, lsb-base, procps,
+Depends: ${shlibs:Depends}, ${misc:Depends}, procps,
  sqlcipher, rabbitmq-server, adduser, libwandder2 (>=2.0.21)
 Description: Collector daemon for an OpenLI system
  OpenLI is a software suite that allows network operators to conduct
