@@ -13,9 +13,9 @@ ExecReload=/bin/kill -s HUP $MAINPID
 Restart=on-abnormal
 RestartSec=5s
 
-PrivateTmp=yes
+PrivateTmp=no
 ProtectSystem=yes
-ProtectHome=yes
+ProtectHome=no
 PrivateDevices=yes
 
 [Install]
