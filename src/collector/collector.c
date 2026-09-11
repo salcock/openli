@@ -1774,7 +1774,7 @@ static int start_xinput(collector_global_t *glob, x_input_t *xinp) {
 }
 
 static int start_input(collector_global_t *glob, colinput_t *inp,
-        int todaemon, char *progname) {
+        char *progname) {
 
     libtrace_info_t *info;
     struct timeval tv;
@@ -1829,7 +1829,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
      * program name associated with them.
      */
 
-    if (todaemon) {
+    if (daemonised) {
         open_daemonlog(progname);
     }
 
@@ -3587,7 +3587,7 @@ int main(int argc, char *argv[]) {
         pthread_rwlock_unlock(&(glob->x_input_mutex));
 
         HASH_ITER(hh, glob->inputs, inp, tmp) {
-            if (start_input(glob, inp, todaemon, argv[0]) == 0) {
+            if (start_input(glob, inp, argv[0]) == 0) {
                 logger(LOG_INFO, "OpenLI: failed to start input %s",
                         inp->uri);
             }

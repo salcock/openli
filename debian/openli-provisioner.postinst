@@ -43,7 +43,6 @@ case "$1" in
 
         chown -R ${USER}: /etc/openli
         chown -R ${USER}: /var/lib/openli
-        chown -R ${USER}: /var/run/openli
         chmod 2750 /etc/openli
         ;;
 

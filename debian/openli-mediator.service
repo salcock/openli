@@ -1,17 +1,22 @@
 [Unit]
 Description=OpenLI mediator daemon
-After=network.target
+Documentation=http://github.com/OpenLI-NZ/openli/wiki
+After=network.target rabbitmq-server.service
 Wants=rabbitmq-server.service
 
 [Service]
-Type=forking
-ExecStart=/etc/init.d/openli-mediator start
-ExecStop=/etc/init.d/openli-mediator stop
-ExecReload=/etc/init.d/openli-mediator reload
+User=openli
+Group=openli
+Type=simple
+ExecStart=/usr/bin/openlimediator -c /etc/openli/mediator-config.yaml
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=on-abnormal
+RestartSec=5s
+
 PrivateTmp=yes
-PrivateDevices=yes
-ProtectSystem=yes
+ProtectSystem=full
 ProtectHome=yes
+PrivateDevices=yes
 
 [Install]
 WantedBy=multi-user.target

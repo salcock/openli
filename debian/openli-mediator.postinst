@@ -40,7 +40,6 @@ case "$1" in
                 --home /etc/openli ${USER}
 
         chown -R ${USER}: /etc/openli
-        chown -R ${USER}: /var/run/openli
         chmod 2750 /etc/openli
 
         save_original_packages
