@@ -14,7 +14,7 @@ Restart=on-abnormal
 RestartSec=5s
 
 PrivateTmp=yes
-ProtectSystem=full
+ProtectSystem=yes
 ProtectHome=yes
 PrivateDevices=yes
 
