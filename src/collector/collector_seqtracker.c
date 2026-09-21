@@ -547,6 +547,7 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
     size_t index;
     size_t shutdown_retries = 0;
 
+    memset(&job, 0, sizeof(job));
     job.seqno = *seqno;
 	job.preencoded = intstate->preencoded;
 	job.origreq = recvd;
@@ -810,8 +811,8 @@ postencodepush:
         update_cinstate.cc_seqno = cinseq->cc_seqno;
 
         if (seqdata->cinstate_enabled) {
-            if (cinstate_db_update(seqdata->cinstatedb, liid, cin,
-                    &update_cinstate) < 0) {
+            if (cinstate_db_update(seqdata->cinstatedb,
+                    intstate->details.liid, cin, &update_cinstate) < 0) {
                 seqdata->cinstate_enabled = 0;
                 cinstate_db_close(&(seqdata->cinstatedb));
             }
