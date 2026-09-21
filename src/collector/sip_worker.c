@@ -1469,7 +1469,8 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
 void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
         voipintercept_t *vint, openli_export_recv_t *irimsg,
         etsili_iri_type_t iritype, int64_t cin, openli_location_t *loc,
-        int loc_count, libtrace_packet_t **pkts, int pkt_cnt, uint8_t dir) {
+        int loc_count, libtrace_packet_t **pkts, int pkt_cnt, uint8_t dir,
+        uint8_t *copiedcontent) {
 
     openli_export_recv_t *copy;
 
@@ -1528,9 +1529,15 @@ void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
     copy->data.ipmmiri.use_sessiondir = sipworker->shared->use_sessiondir;
     pthread_rwlock_unlock(sipworker->shared_mutex);
 
-    copy->data.ipmmiri.content = malloc(copy->data.ipmmiri.contentlen);
-    memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
-            irimsg->data.ipmmiri.contentlen);
+    if (copiedcontent) {
+        copy->data.ipmmiri.content = copiedcontent;
+    } else {
+        copy->data.ipmmiri.content = malloc(copy->data.ipmmiri.contentlen);
+        memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
+                irimsg->data.ipmmiri.contentlen);
+    }
+    copy->data.ipmmiri.contentlen = irimsg->data.ipmmiri.contentlen;
+
     copy_location_into_ipmmiri_job(copy, loc, loc_count);
 
     pthread_mutex_lock(sipworker->stats_mutex);

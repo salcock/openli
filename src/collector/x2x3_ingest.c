@@ -418,7 +418,7 @@ static void copy_source_address_into_ipmmiri_job(openli_export_recv_t *msg,
         msg->data.ipmmiri.ipfamily = AF_INET;
         memcpy(msg->data.ipmmiri.ipsrc,
                 cond_attrs[X2X3_COND_ATTR_SOURCE_IPV4_ADDRESS]->parsed.as_octets,
-                16);
+                4);
     } else if (cond_attrs[X2X3_COND_ATTR_SOURCE_IPV6_ADDRESS] &&
             cond_attrs[X2X3_COND_ATTR_SOURCE_IPV6_ADDRESS]->is_parsed) {
 
@@ -440,7 +440,7 @@ static void copy_dest_address_into_ipmmiri_job(openli_export_recv_t *msg,
         msg->data.ipmmiri.ipfamily = AF_INET;
         memcpy(msg->data.ipmmiri.ipdest,
                 cond_attrs[X2X3_COND_ATTR_DEST_IPV4_ADDRESS]->parsed.as_octets,
-                16);
+                4);
     } else if (cond_attrs[X2X3_COND_ATTR_DEST_IPV6_ADDRESS] &&
             cond_attrs[X2X3_COND_ATTR_DEST_IPV6_ADDRESS]->is_parsed) {
 

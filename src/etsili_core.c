@@ -914,7 +914,7 @@ void etsili_preencode_static_fields(
     uint32_t noencrypt = 1, aes_192_cbc = 3;
     uint32_t iptype_4 = 0, iptype_6 = 1;
     uint32_t ipassign_static = 1, ipassign_dynamic = 2, ipassign_unk = 3;
-    uint32_t ippfx_64 = 64, ippfx_48 = 48, ippfx_32 = 32;
+    uint32_t ippfx_64 = 64, ippfx_48 = 48, ippfx_32 = 0xFFFFFFFF;
     uint32_t iritype_report = 4;
 
     memset(pendarray, 0, sizeof(wandder_encode_job_t) * OPENLI_PREENCODE_LAST);
