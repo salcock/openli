@@ -682,6 +682,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     uint32_t *seqno;
     struct cinstate_t update_cinstate;
     int res = 0;
+    uint8_t force_cindb_update = 0;
 
     memset(&job, 0, sizeof(job));
     liid = extract_liid_from_job(recvd);
@@ -727,18 +728,28 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         cinseq->iri_end = 0;
 
         if (init_cinstate.cc_seqno > 0 || init_cinstate.iri_seqno > 0) {
-            // send a CIN reset for this LIID/CIN combo TODO
-            uint32_t dummyseqno = 0;
-            openli_export_recv_t *resetjob;
+            if (strcmp(authcc, "CH") == 0) {
+                /* Switzerland forbids CIN Reset messages, so we have to
+                 * get creative with how we indicate that there was a "break"
+                 * in the intercept
+                 */
+                cinseq->iri_seqno = init_cinstate.iri_seqno + 100000;
+                cinseq->cc_seqno = init_cinstate.cc_seqno + 100000;
+                force_cindb_update = 1;
+            } else {
+                // send a CIN reset for this LIID/CIN combo
+                uint32_t dummyseqno = 0;
+                openli_export_recv_t *resetjob;
 
-            resetjob = calloc(1, sizeof(openli_export_recv_t));
-            resetjob->type = OPENLI_EXPORT_CIN_RESET;
-            resetjob->destid = recvd->destid;
-            resetjob->data.cininfo.liid = strdup(liid);
-            resetjob->data.cininfo.cin = cin;
+                resetjob = calloc(1, sizeof(openli_export_recv_t));
+                resetjob->type = OPENLI_EXPORT_CIN_RESET;
+                resetjob->destid = recvd->destid;
+                resetjob->data.cininfo.liid = strdup(liid);
+                resetjob->data.cininfo.cin = cin;
 
-            generate_encoding_job(seqdata, resetjob, intstate, cinseq,
-                    liid, &dummyseqno, authcc, delivcc);
+                generate_encoding_job(seqdata, resetjob, intstate, cinseq,
+                        liid, &dummyseqno, authcc, delivcc);
+            }
         }
 
         HASH_ADD_KEYPTR(hh, intstate->cinsequencing, &(cinseq->cin),
@@ -805,7 +816,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 
 postencodepush:
 
-    if (*seqno == 1) {
+    if (force_cindb_update || ((*seqno) % 1000) == 1) {
         establish_cinstate_dbconn(seqdata);
         update_cinstate.iri_seqno = cinseq->iri_seqno;
         update_cinstate.cc_seqno = cinseq->cc_seqno;
