@@ -155,7 +155,7 @@ static int etsili_create_ipmmcc_template(wandder_encoder_t *encoder,
     }
 
     tplate->cc_content.content_ptr = wandder_get_itemptr(dec);
-
+    memcpy(tplate->cc_content.content_ptr, mmccjob->content, mmccjob->contentlen);
     /* Release the encoded result -- the caller will use the templated copy */
     wandder_release_encoded_result(encoder, encres);
     free_wandder_decoder(dec);

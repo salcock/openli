@@ -1658,6 +1658,7 @@ int etsili_create_emailcc_template(wandder_encoder_t *encoder,
     }
 
     tplate->cc_content.content_ptr = wandder_get_itemptr(dec);
+    memcpy(tplate->cc_content.content_ptr, content, contentlen);
 
 endtempl:
     if (dec) free_wandder_decoder(dec);
