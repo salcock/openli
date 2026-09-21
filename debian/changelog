@@ -1,6 +1,6 @@
 openli (1.1.22-1) unstable; urgency=medium
 
-  * Fix bug where the contents of some IPCC contained random bytes rather
+  * Fix bug where the contents of some CCs contained random bytes rather
     than the actual intercepted IP payload.
   * Fix bug where the collector could crash when updating its CIN state
     database due to a race condition.
