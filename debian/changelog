@@ -1,3 +1,14 @@
+openli (1.1.22-1) unstable; urgency=medium
+
+  * Fix bug where the contents of some IPCC contained random bytes rather
+    than the actual intercepted IP payload.
+  * Fix bug where the collector could crash when updating its CIN state
+    database due to a race condition.
+  * Add extra guardrails to protect against (unlikely) memory errors in
+    the GSM SMS parsing code path.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Mon, 21 Sep 2026 16:16:09 +1200
+
 openli (1.1.21-1) unstable; urgency=medium
 
   * Add ability to configure specific IP prefixes that should be

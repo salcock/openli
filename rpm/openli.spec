@@ -1,5 +1,5 @@
 Name:           openli
-Version:        1.1.21
+Version:        1.1.22
 Release:        1%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
@@ -335,6 +335,12 @@ fi
 
 
 %changelog
+* Mon Sep 21 2026 Shane Alcock <salcock@searchlight.nz> - 1.1.22-1
+- Updated for 1.1.22 release
+
+* Wed Sep 16 2026 Shane Alcock <salcock@searchlight.nz> - 1.1.21-1
+- Updated for 1.1.21 release
+
 * Mon Jul 27 2026 Shane Alcock <salcock@searchlight.nz> - 1.1.20-1
 - Updated for 1.1.20 release
 
