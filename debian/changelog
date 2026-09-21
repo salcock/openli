@@ -5,7 +5,14 @@ openli (1.1.22-1) unstable; urgency=medium
   * Fix bug where the collector could crash when updating its CIN state
     database due to a race condition.
   * Add extra guardrails to protect against (unlikely) memory errors in
-    the GSM SMS parsing code path.
+    the code paths for GSM SMS, X2/X3 and SMS content masking.
+  * Fix bug where masking SMS content for one intercept could also end
+    up masking the SMS content for other intercepts that have the same
+    target, even if they did not want the message content to be masked.
+  * Fix some incorrect length validations when parsing E-UTRAN-FDD
+    location fields.
+  * Fix some mismatches in how IPv4 subnet masks are expressed that was
+    causing some encoding performance optimizations to be missed.
 
  -- Shane Alcock <salcock@searchlight.nz>  Mon, 21 Sep 2026 16:16:09 +1200
 
