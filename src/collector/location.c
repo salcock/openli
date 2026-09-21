@@ -108,6 +108,9 @@ int parse_e_utran_fdd_field(const char *field, openli_location_t **loc,
         return -1;
     }
     ptr ++;
+    if (strlen(ptr) < 16) {
+        return -1;
+    }
 
     memcpy(cellid.mcc, ptr, 3);
     cellid.mcc[3] = '\0';

@@ -1475,23 +1475,23 @@ void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
     openli_export_recv_t *copy;
 
     if (vint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
-        return;
+        goto bail;
     }
 
     if (vint->common.tostart_time > irimsg->ts.tv_sec) {
-        return;
+        goto bail;
     }
 
     if (vint->common.toend_time > 0 &&
             vint->common.toend_time <= irimsg->ts.tv_sec) {
-        return;
+        goto bail;
     }
 
     if (vint->common.targetagency == NULL ||
             strcmp(vint->common.targetagency, "pcapdisk") == 0) {
         int i;
         if (pkts == NULL) {
-            return;
+            goto bail;
         }
         for (i = 0; i < pkt_cnt; i++) {
             if (pkts[i] == NULL) {
@@ -1503,7 +1503,7 @@ void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
                     sipworker->zmq_pubsocks[vint->common.seqtrackerid],
                     copy);
         }
-        return;
+        goto bail;
     }
     /* TODO consider recycling IRI messages like we do with IPCCs */
 
@@ -1545,6 +1545,10 @@ void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
     pthread_mutex_unlock(sipworker->stats_mutex);
     publish_openli_msg(sipworker->zmq_pubsocks[vint->common.seqtrackerid],
             copy);
+    return;
+
+bail:
+    if (copiedcontent) free(copiedcontent);
 }
 
 
