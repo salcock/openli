@@ -150,7 +150,7 @@ static inline void encode_ipcc_body(wandder_encoder_t *encoder,
     wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, ipcontent, iplen);
 
-    END_ENCODED_SEQUENCE(encoder, 7);
+    END_ENCODED_SEQUENCE(encoder, 6);
 
 }
 
@@ -1557,6 +1557,7 @@ static int etsili_create_generic_cc_template(wandder_encoder_t *encoder,
             goto endtempl;
         }
         tplate->cc_content.content_ptr = wandder_get_itemptr(dec);
+        memcpy(tplate->cc_content.content_ptr, ipcontent, ipclen);
     } else if (templatetype == CC_TEMPLATE_TYPE_UMTSCC) {
         wandder_decode_next(dec);       // UMTSCC
         wandder_decode_next(dec);       // iPPacket (tag 4)
@@ -1572,6 +1573,7 @@ static int etsili_create_generic_cc_template(wandder_encoder_t *encoder,
             goto endtempl;
         }
         tplate->cc_content.content_ptr = wandder_get_itemptr(dec);
+        memcpy(tplate->cc_content.content_ptr, ipcontent, ipclen);
     }
     ret = 0;
 
