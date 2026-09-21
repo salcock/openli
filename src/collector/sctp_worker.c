@@ -238,19 +238,22 @@ static gsm_identity_record_t *update_gsm_identity_map(
     gsm_identity_record_t *rec;
     struct timeval tv;
 
+    if (imsi_len > sizeof(rec->imsi)) {
+        imsi_len = sizeof(rec->imsi);
+    }
+    if (msisdn_len > sizeof(rec->msisdn)) {
+        msisdn_len = sizeof(rec->msisdn);
+    }
+
     shid = hashlittle(imsi, imsi_len, 50331653) % \
             sctp->imsi_identities->shardcount;
     shard = &(sctp->imsi_identities->shards[shid]);
 
     gettimeofday(&tv, NULL);
-
     pthread_rwlock_wrlock(&shard->rwlock);
     HASH_FIND(hh, shard->rec, imsi, imsi_len, rec);
     if (!rec) {
         rec = calloc(1, sizeof(gsm_identity_record_t));
-        if (imsi_len > sizeof(rec->imsi)) {
-            imsi_len = sizeof(rec->imsi);
-        }
         memcpy(rec->imsi, imsi, imsi_len);
         HASH_ADD_KEYPTR(hh, shard->rec, rec->imsi, imsi_len, rec);
     }
@@ -578,10 +581,14 @@ static void generate_gsmsms_iri(openli_sctp_worker_t *sctp,
     }
 
     if (tgt_msisdn && tgt_msisdn_len > 0) {
+        if (tgt_msisdn_len > sizeof(msg->data.gsmsms.target_msisdn)) {
+            tgt_msisdn_len = sizeof(msg->data.gsmsms.target_msisdn);
+        }
         memcpy(msg->data.gsmsms.target_msisdn, tgt_msisdn, tgt_msisdn_len);
         msg->data.gsmsms.target_msisdn_len = tgt_msisdn_len;
     } else {
-        memset(msg->data.gsmsms.target_imsi, 0, 9);
+        memset(msg->data.gsmsms.target_msisdn, 0,
+                sizeof(msg->data.gsmsms.target_msisdn));
         msg->data.gsmsms.target_msisdn_len = 0;
     }
 
@@ -609,7 +616,7 @@ static void sctp_intercept_sms_ifrequired(openli_sctp_worker_t *sctp,
     char msisdn_sender[16];
     char msisdn_recv[16];
     uint8_t *tgt_msisdn = NULL;
-    uint8_t tgt_msisdn_len;
+    uint8_t tgt_msisdn_len = 0;
     uint8_t *tgt_imsi = NULL;
 
     /* TODO it would be better to store the target info in BCD format
@@ -696,7 +703,7 @@ static void sctp_intercept_sms_ifrequired(openli_sctp_worker_t *sctp,
             continue;
         }
 
-        cin = hashlittle(sesskey, sizeof(sesskey), 3933651277);
+        cin = hashlittle(sesskey, sizeof(gsm_tx_key_t), 3933651277);
         cin ^= (tv->tv_sec << 32);
 
         if (invoke->map_opcode == 44) {
@@ -1038,14 +1045,11 @@ static int sctp_worker_process_sync_thread_message(openli_sctp_worker_t *sctp) {
         logger(LOG_INFO, "OpenLI: WARNING: Ran out of invoke open slots for transaction ID %u in SCTP worker %d. Transaction events may be missed.", \
                 otid, sctp->workerid); \
     } else if (invoke) { \
+        int32_t savedid = invoke->id; \
+        if (invoke->content) free(invoke->content); \
+        memset(invoke, 0, sizeof(gsm_invoke_saved_t)); \
+        invoke->id = savedid; \
         invoke->map_opcode = opcode; \
-        invoke->content = NULL; \
-        invoke->content_len = 0; \
-        memset(invoke->saved_imsi, 0, sizeof(invoke->saved_imsi)); \
-        memset(invoke->sender_msisdn, 0, sizeof(invoke->sender_msisdn)); \
-        memset(invoke->receiving_msisdn, 0, sizeof(invoke->receiving_msisdn)); \
-        invoke->sender_msisdn_len = 0; \
-        invoke->receiving_msisdn_len = 0; \
     }
 
 #define RECALL_INVOKE \
@@ -1065,6 +1069,10 @@ static gsm_invoke_saved_t *record_mo_sms_tpdu(openli_sctp_worker_t *sctp,
     uint8_t length;
     uint8_t saved_flags;
 
+    if (tpdu == NULL || tpdulen < 3) {
+        return NULL;
+    }
+
     saved_flags = (*ptr);
 
     // We need to do a little decoding to get the TP-DA (i.e. the SMS
@@ -1074,7 +1082,26 @@ static gsm_invoke_saved_t *record_mo_sms_tpdu(openli_sctp_worker_t *sctp,
     // the length field is given in BCD digits (i.e. 4 bits per digit), plus
     // we have to account for the numbering plan byte that precedes the
     // MSISDN digits themselves
-    length = 1 + (*ptr / 2) + (((*ptr) % 2) ? 1 : 0);
+    if (*ptr == 0) {
+        length = 0;
+    } else {
+        length = 1 + (*ptr / 2) + (((*ptr) % 2) ? 1 : 0);
+
+        /* handle case where length is weirdly long */
+        if (length > sizeof(invoke->receiving_msisdn)) {
+            length = sizeof(invoke->receiving_msisdn);
+        }
+
+        /* handle case where the packet has been truncated and doesn't
+         * contain the full "length" worth of bytes */
+        if (1 + (ptr - tpdu) + length > tpdulen) {
+            if (tpdulen > (ptr - tpdu) + 1) {
+                length = tpdulen - ((ptr - tpdu) + 1);
+            } else {
+                length = 0;
+            }
+        }
+    }
 
     SAVE_INVOKE
     if (!invoke) return NULL;
@@ -1083,7 +1110,9 @@ static gsm_invoke_saved_t *record_mo_sms_tpdu(openli_sctp_worker_t *sctp,
     // emit it later on once we have the confirmation that it was forwarded
     // (or not)
     invoke->tpdu_flags = saved_flags;
-    memcpy(invoke->receiving_msisdn, ptr + 1, length);
+    if (length > 0) {
+        memcpy(invoke->receiving_msisdn, ptr + 1, length);
+    }
     invoke->receiving_msisdn_len = length;
 
     invoke->content = malloc(tpdulen);
@@ -1091,6 +1120,9 @@ static gsm_invoke_saved_t *record_mo_sms_tpdu(openli_sctp_worker_t *sctp,
     invoke->content_len = tpdulen;
 
     if (orig_msisdn_len > 0) {
+        if (orig_msisdn_len > sizeof(invoke->sender_msisdn)) {
+            orig_msisdn_len = sizeof(invoke->sender_msisdn);
+        }
         memcpy(invoke->sender_msisdn, orig_msisdn, orig_msisdn_len);
         invoke->sender_msisdn_len = orig_msisdn_len;
     }
@@ -1108,6 +1140,10 @@ static void record_mt_sms_tpdu(openli_sctp_worker_t *sctp, uint8_t *tpdu,
     uint8_t length;
     uint8_t saved_flags;
 
+    if (tpdu == NULL || tpdulen < 3) {
+        return;
+    }
+
     saved_flags = (*ptr);
 
     // We need to do a little decoding to get the TP-OA (i.e. the SMS
@@ -1117,7 +1153,24 @@ static void record_mt_sms_tpdu(openli_sctp_worker_t *sctp, uint8_t *tpdu,
     // the length field is given in BCD digits (i.e. 4 bits per digit), plus
     // we have to account for the numbering plan byte that precedes the
     // MSISDN digits themselves
-    length = 1 + (*ptr / 2) + (((*ptr) % 2) ? 1 : 0);
+    if (*ptr == 0) {
+        length = 0;
+    } else {
+        length = 1 + (*ptr / 2) + (((*ptr) % 2) ? 1 : 0);
+        /* handle case where length is weirdly long */
+        if (length > sizeof(invoke->sender_msisdn)) {
+            length = sizeof(invoke->sender_msisdn);
+        }
+        /* handle case where the packet has been truncated and doesn't
+         * contain the full "length" worth of bytes */
+        if (1 + (ptr - tpdu) + length > tpdulen) {
+            if (tpdulen > (ptr - tpdu) + 1) {
+                length = tpdulen - ((ptr - tpdu) + 1);
+            } else {
+                length = 0;
+            }
+        }
+    }
 
     SAVE_INVOKE
     if (!invoke) return;
@@ -1126,7 +1179,9 @@ static void record_mt_sms_tpdu(openli_sctp_worker_t *sctp, uint8_t *tpdu,
     // emit it later on once we have the confirmation that it was forwarded
     // (or not)
     invoke->tpdu_flags = saved_flags;
-    memcpy(invoke->sender_msisdn, ptr + 1, length);
+    if (length > 0) {
+        memcpy(invoke->sender_msisdn, ptr + 1, length);
+    }
     invoke->sender_msisdn_len = length;
 
     invoke->content = malloc(tpdulen);
@@ -1134,6 +1189,9 @@ static void record_mt_sms_tpdu(openli_sctp_worker_t *sctp, uint8_t *tpdu,
     invoke->content_len = tpdulen;
 
     if (dest_msisdn_len > 0) {
+        if (dest_msisdn_len > sizeof(invoke->receiving_msisdn)) {
+            dest_msisdn_len = sizeof(invoke->receiving_msisdn);
+        }
         memcpy(invoke->receiving_msisdn, dest_msisdn, dest_msisdn_len);
         invoke->receiving_msisdn_len = dest_msisdn_len;
     } else {
@@ -1257,6 +1315,9 @@ static void parse_gsm_mobile_application(openli_sctp_worker_t *sctp,
             // sm-RP-OA
             GSM_NEXT_DECODE(dec);
             if (ident == 2) {
+                if (length > sizeof(orig_msisdn)) {
+                    length = sizeof(orig_msisdn);
+                }
                 orig_msisdn_len = length;
                 memcpy(orig_msisdn, itemptr, orig_msisdn_len);
             }
@@ -1274,6 +1335,7 @@ static void parse_gsm_mobile_application(openli_sctp_worker_t *sctp,
                 return;
             }
 
+            memset(invoke->saved_imsi, 0, sizeof(invoke->saved_imsi));
             GSM_NEXT_DECODE(dec);
             if (ident == WANDDER_TAG_OCTETSTRING) {
                 // IMSI of the sender
