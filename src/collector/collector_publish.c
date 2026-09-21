@@ -609,7 +609,7 @@ openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
         } else {
             x = rem;
         }
-        msg->data.ipcc.ipcontent = realloc(msg->data.ipcc.ipcontent, x);
+        msg->data.ipcc.ipcontent = calloc(x, sizeof(uint8_t));
         msg->data.ipcc.ipcalloc = x;
     }
 
@@ -618,6 +618,7 @@ openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
         free(msg);
         return NULL;
     }
+
     memcpy(msg->data.ipcc.ipcontent, l3, rem);
     msg->data.ipcc.ipclen = rem;
     msg->data.ipcc.cin = cin;

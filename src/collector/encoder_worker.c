@@ -1213,6 +1213,7 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
     struct timeval *tsptr = NULL;
     openli_encoded_result_t *res = &(resarray[(*next)]);
 
+    memset(res, 0, sizeof(openli_encoded_result_t));
     snprintf(keystr, 1000, "%s-%s-%u", job->liid, job->cinstr,
             job->timefmt);
     JSLI(pval, enc->saved_intercept_templates, (const uint8_t *)keystr);
