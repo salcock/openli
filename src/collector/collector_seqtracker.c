@@ -682,7 +682,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     uint32_t *seqno;
     struct cinstate_t update_cinstate;
     int res = 0;
-    uint8_t force_cindb_update = 0;
+    uint8_t force_cindb_update = 0, cinreset_forbid = 0;
     struct timeval tv;
 
     memset(&job, 0, sizeof(job));
@@ -691,6 +691,12 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     delivcc = extract_delivcc_from_job(recvd);
     cin = extract_cin_from_job(recvd);
     iritype = extract_iritype_from_job(recvd);
+
+    if (authcc && strcmp(authcc, "CH") == 0) {
+        cinreset_forbid = 1;
+    } else {
+        cinreset_forbid = 0;
+    }
 
     HASH_FIND(hh, seqdata->intercepts, liid, strlen(liid), intstate);
     if (!intstate) {
@@ -730,7 +736,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         cinseq->last_cindb_update = 0;
 
         if (init_cinstate.cc_seqno > 0 || init_cinstate.iri_seqno > 0) {
-            if (strcmp(authcc, "CH") == 0) {
+            if (cinreset_forbid) {
                 /* Switzerland forbids CIN Reset messages, so we have to
                  * get creative with how we indicate that there was a "break"
                  * in the intercept
@@ -820,7 +826,7 @@ postencodepush:
 
     if (seqdata->cinstate_enabled) {
         int upd_r;
-        if (!force_cindb_update && ((*seqno) % 1000) == 1) {
+        if (cinreset_forbid && !force_cindb_update && ((*seqno) % 1000) == 1) {
             gettimeofday(&tv, NULL);
             if (tv.tv_sec > cinseq->last_cindb_update) {
                 force_cindb_update = 1;
@@ -836,7 +842,7 @@ postencodepush:
                     intstate->details.liid, cin, &update_cinstate)) < 0) {
                 seqdata->cinstate_enabled = 0;
                 cinstate_db_close(&(seqdata->cinstatedb));
-            } else if (upd_r != 0) {
+            } else if (cinreset_forbid && upd_r != 0) {
                 gettimeofday(&tv, NULL);
                 cinseq->last_cindb_update = tv.tv_sec;
             }
