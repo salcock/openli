@@ -13,8 +13,12 @@ openli (1.1.22-1) unstable; urgency=medium
     location fields.
   * Fix some mismatches in how IPv4 subnet masks are expressed that was
     causing some encoding performance optimizations to be missed.
+  * Intercepts with an authorization country code of CH no longer emit
+    CIN reset records if the collector restarts; instead we introduce a
+    large sequence number gap to indicate that there was a break in the
+    interception for that session.
 
- -- Shane Alcock <salcock@searchlight.nz>  Mon, 21 Sep 2026 16:16:09 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Tue, 22 Sep 2026 16:03:09 +1200
 
 openli (1.1.21-1) unstable; urgency=medium
 
