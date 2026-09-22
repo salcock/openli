@@ -24,6 +24,8 @@
  *
  */
 
+#define _GNU_SOURCE
+#include <string.h>
 #include <assert.h>
 
 #include "logger.h"
@@ -153,7 +155,7 @@ int mask_sms_message_content(uint8_t *sipstart, uint16_t siplen) {
     uint8_t msgtype;
     uint8_t len;
 
-    bodystart = (uint8_t *)(strstr((char *)sipstart, "\r\n\r\n"));
+    bodystart = (uint8_t *)(memmem(sipstart, siplen, "\r\n\r\n", 4));
     if (bodystart == NULL) {
         return 0;
     }

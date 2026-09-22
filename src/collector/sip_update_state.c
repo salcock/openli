@@ -660,7 +660,8 @@ static int process_sip_register(openli_sip_worker_t *sipworker, char *callid,
             continue;
         }
         create_sip_ipmmiri(sipworker, vint, irimsg, ETSILI_IRI_REPORT,
-                sipreg->cin, locptr, loc_cnt, pkts, pkt_cnt, ETSI_DIR_FROM_TARGET);
+                sipreg->cin, locptr, loc_cnt, pkts, pkt_cnt,
+                ETSI_DIR_FROM_TARGET, NULL);
         exportcount += 1;
     }
     release_openli_sip_identity_set(&all_identities);
@@ -831,7 +832,7 @@ static int process_sip_invite(openli_sip_worker_t *sipworker, char *callid,
         }
 
         create_sip_ipmmiri(sipworker, vint, irimsg, iritype, (int64_t)cin,
-                locptr, loc_cnt, pkts, pkt_cnt, thisrtp->dir);
+                locptr, loc_cnt, pkts, pkt_cnt, thisrtp->dir, NULL);
         exportcount ++;
     }
 
@@ -905,6 +906,7 @@ static int process_sip_message(openli_sip_worker_t *sipworker, char *callid,
     gettimeofday(&tv, NULL);
 
     HASH_ITER(hh_liid, sipworker->voipintercepts, vint, tmp) {
+        uint8_t *contentcopy = NULL;
         if (sipworker->sipparser->badsip) {
             break;
         }
@@ -917,12 +919,16 @@ static int process_sip_message(openli_sip_worker_t *sipworker, char *callid,
             /* TODO set a flag so that the encoder knows we need to use
              * iRIOnlySIPMessage as our IPMMIRIContents
              */
-            mask_sms_message_content(irimsg->data.ipmmiri.content,
+            contentcopy = malloc(irimsg->data.ipmmiri.contentlen);
+            memcpy(contentcopy, irimsg->data.ipmmiri.content,
+                    irimsg->data.ipmmiri.contentlen);
+            mask_sms_message_content(contentcopy,
                     irimsg->data.ipmmiri.contentlen);
         }
 
         create_sip_ipmmiri(sipworker, vint, irimsg, iritype,
-                (int64_t)msg->cin, locptr, loc_cnt, pkts, pkt_cnt, msg->dir);
+                (int64_t)msg->cin, locptr, loc_cnt, pkts, pkt_cnt, msg->dir,
+                contentcopy);
         exportcount ++;
     }
 
@@ -1052,7 +1058,7 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
         if (findreg) {
             create_sip_ipmmiri(sipworker, vint, irimsg,
                     ETSILI_IRI_REPORT, findreg->cin, NULL, 0, pkts,
-                    pkt_cnt, ETSI_DIR_TO_TARGET);
+                    pkt_cnt, ETSI_DIR_TO_TARGET, NULL);
             exportcount ++;
 
             if (sip_is_200ok(sipworker->sipparser)) {
@@ -1074,7 +1080,7 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
         if (msg) {
             create_sip_ipmmiri(sipworker, vint, irimsg,
                     ETSILI_IRI_END, msg->cin, locptr, loc_cnt, pkts,
-                    pkt_cnt, msg->dir);
+                    pkt_cnt, msg->dir, NULL);
             exportcount ++;
             continue;
         }
@@ -1119,7 +1125,7 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
         }
 
         create_sip_ipmmiri(sipworker, vint, irimsg, iritype, cin,
-               locptr, loc_cnt, pkts, pkt_cnt, thisrtp->dir);
+               locptr, loc_cnt, pkts, pkt_cnt, thisrtp->dir, NULL);
         exportcount += 1;
 
     }

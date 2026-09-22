@@ -150,7 +150,7 @@ static inline void encode_ipcc_body(wandder_encoder_t *encoder,
     wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, ipcontent, iplen);
 
-    END_ENCODED_SEQUENCE(encoder, 7);
+    END_ENCODED_SEQUENCE(encoder, 6);
 
 }
 
@@ -914,7 +914,7 @@ void etsili_preencode_static_fields(
     uint32_t noencrypt = 1, aes_192_cbc = 3;
     uint32_t iptype_4 = 0, iptype_6 = 1;
     uint32_t ipassign_static = 1, ipassign_dynamic = 2, ipassign_unk = 3;
-    uint32_t ippfx_64 = 64, ippfx_48 = 48, ippfx_32 = 32;
+    uint32_t ippfx_64 = 64, ippfx_48 = 48, ippfx_32 = 0xFFFFFFFF;
     uint32_t iritype_report = 4;
 
     memset(pendarray, 0, sizeof(wandder_encode_job_t) * OPENLI_PREENCODE_LAST);
@@ -1557,6 +1557,7 @@ static int etsili_create_generic_cc_template(wandder_encoder_t *encoder,
             goto endtempl;
         }
         tplate->cc_content.content_ptr = wandder_get_itemptr(dec);
+        memcpy(tplate->cc_content.content_ptr, ipcontent, ipclen);
     } else if (templatetype == CC_TEMPLATE_TYPE_UMTSCC) {
         wandder_decode_next(dec);       // UMTSCC
         wandder_decode_next(dec);       // iPPacket (tag 4)
@@ -1572,6 +1573,7 @@ static int etsili_create_generic_cc_template(wandder_encoder_t *encoder,
             goto endtempl;
         }
         tplate->cc_content.content_ptr = wandder_get_itemptr(dec);
+        memcpy(tplate->cc_content.content_ptr, ipcontent, ipclen);
     }
     ret = 0;
 
@@ -1656,6 +1658,7 @@ int etsili_create_emailcc_template(wandder_encoder_t *encoder,
     }
 
     tplate->cc_content.content_ptr = wandder_get_itemptr(dec);
+    memcpy(tplate->cc_content.content_ptr, content, contentlen);
 
 endtempl:
     if (dec) free_wandder_decoder(dec);

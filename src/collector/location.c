@@ -108,6 +108,9 @@ int parse_e_utran_fdd_field(const char *field, openli_location_t **loc,
         return -1;
     }
     ptr ++;
+    if (strlen(ptr) < 16) {
+        return -1;
+    }
 
     memcpy(cellid.mcc, ptr, 3);
     cellid.mcc[3] = '\0';
@@ -122,7 +125,7 @@ int parse_e_utran_fdd_field(const char *field, openli_location_t **loc,
     }
     cellid.mnc[3] = '\0';
 
-    if (strlen(field) < step + 11) {
+    if (strlen(ptr) < step + 11) {
         /* not enough characters, must be an invalid field */
         return -1;
     }

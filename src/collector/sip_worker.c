@@ -1469,28 +1469,29 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
 void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
         voipintercept_t *vint, openli_export_recv_t *irimsg,
         etsili_iri_type_t iritype, int64_t cin, openli_location_t *loc,
-        int loc_count, libtrace_packet_t **pkts, int pkt_cnt, uint8_t dir) {
+        int loc_count, libtrace_packet_t **pkts, int pkt_cnt, uint8_t dir,
+        uint8_t *copiedcontent) {
 
     openli_export_recv_t *copy;
 
     if (vint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
-        return;
+        goto bail;
     }
 
     if (vint->common.tostart_time > irimsg->ts.tv_sec) {
-        return;
+        goto bail;
     }
 
     if (vint->common.toend_time > 0 &&
             vint->common.toend_time <= irimsg->ts.tv_sec) {
-        return;
+        goto bail;
     }
 
     if (vint->common.targetagency == NULL ||
             strcmp(vint->common.targetagency, "pcapdisk") == 0) {
         int i;
         if (pkts == NULL) {
-            return;
+            goto bail;
         }
         for (i = 0; i < pkt_cnt; i++) {
             if (pkts[i] == NULL) {
@@ -1502,7 +1503,7 @@ void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
                     sipworker->zmq_pubsocks[vint->common.seqtrackerid],
                     copy);
         }
-        return;
+        goto bail;
     }
     /* TODO consider recycling IRI messages like we do with IPCCs */
 
@@ -1528,9 +1529,15 @@ void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
     copy->data.ipmmiri.use_sessiondir = sipworker->shared->use_sessiondir;
     pthread_rwlock_unlock(sipworker->shared_mutex);
 
-    copy->data.ipmmiri.content = malloc(copy->data.ipmmiri.contentlen);
-    memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
-            irimsg->data.ipmmiri.contentlen);
+    if (copiedcontent) {
+        copy->data.ipmmiri.content = copiedcontent;
+    } else {
+        copy->data.ipmmiri.content = malloc(copy->data.ipmmiri.contentlen);
+        memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
+                irimsg->data.ipmmiri.contentlen);
+    }
+    copy->data.ipmmiri.contentlen = irimsg->data.ipmmiri.contentlen;
+
     copy_location_into_ipmmiri_job(copy, loc, loc_count);
 
     pthread_mutex_lock(sipworker->stats_mutex);
@@ -1538,6 +1545,10 @@ void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
     pthread_mutex_unlock(sipworker->stats_mutex);
     publish_openli_msg(sipworker->zmq_pubsocks[vint->common.seqtrackerid],
             copy);
+    return;
+
+bail:
+    if (copiedcontent) free(copiedcontent);
 }
 
 

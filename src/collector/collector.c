@@ -2591,10 +2591,13 @@ static collector_global_t *parse_global_config(char *configfile) {
     collector_global_t *glob = NULL;
     char *jsonconfig;
     char *cinstatekey_file = NULL;
-    void *dbptr = NULL;
+    openli_cinstatedb_t dbstate;
     colsync_udp_sink_t *sink, *tmp;
     char uuidstr[64];
     char fullkey[2048];
+
+    dbstate.dbptr = NULL;
+    dbstate.update_stmt = NULL;
 
     glob = (collector_global_t *)calloc(1, sizeof(collector_global_t));
     init_collector_global(glob);
@@ -2798,14 +2801,14 @@ static collector_global_t *parse_global_config(char *configfile) {
     }
 
     if (cinstate_db_connect(glob->sharedinfo.cinstatedb_file,
-            glob->sharedinfo.cinstatedb_key, &dbptr) == 0) {
+            glob->sharedinfo.cinstatedb_key, &dbstate) == 0) {
         logger(LOG_INFO,
                 "OpenLI: exiting due to CIN state database failure");
         clear_global_config(glob);
         return NULL;
     }
 
-    cinstate_db_close(&dbptr);
+    cinstate_db_close(&dbstate);
 
     logger(LOG_INFO, "OpenLI: storing observed CIN state in %s",
             glob->sharedinfo.cinstatedb_file);
@@ -3489,7 +3492,8 @@ int main(int argc, char *argv[]) {
         glob->seqtrackers[i].rr_next_encoder_assign = 0;
     	glob->seqtrackers[i].haltinfo = NULL;
         glob->seqtrackers[i].cinstate_enabled = 0xff;
-        glob->seqtrackers[i].cinstatedb = NULL;
+        glob->seqtrackers[i].cinstatedb.dbptr = NULL;
+        glob->seqtrackers[i].cinstatedb.update_stmt = NULL;
         glob->seqtrackers[i].encoders = glob->encoding_threads;
         glob->seqtrackers[i].colident = &(glob->sharedinfo);
         glob->seqtrackers[i].colident_mutex = &(glob->config_mutex);
