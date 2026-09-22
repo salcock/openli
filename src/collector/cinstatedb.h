@@ -28,20 +28,36 @@
 #ifndef OPENLI_COLLECTOR_CINSTATEDB_H_
 #define OPENLI_COLLECTOR_CINSTATEDB_H_
 
+#include "config.h"
 #include <inttypes.h>
+
+#if HAVE_SQLCIPHER
+#include <sqlcipher/sqlite3.h>
+typedef struct cinstate_db {
+    sqlite3 *dbptr;
+    sqlite3_stmt *update_stmt;
+} openli_cinstatedb_t;
+#else
+typedef struct cinstate_db {
+    void *dbptr;
+    void *update_stmt;
+} openli_cinstatedb_t;
+
+#endif
+
 
 struct cinstate_t {
     uint32_t iri_seqno;
     uint32_t cc_seqno;
 };
 
-uint8_t cinstate_db_connect(char *filepath, char *key, void **dbptr);
-void cinstate_db_close(void **dbptr);
-void cinstate_db_lookup(void *dbptr, char *liid, uint32_t cin,
+uint8_t cinstate_db_connect(char *filepath, char *key, openli_cinstatedb_t *state);
+void cinstate_db_close(openli_cinstatedb_t *dbptr);
+void cinstate_db_lookup(openli_cinstatedb_t *dbptr, char *liid, uint32_t cin,
         struct cinstate_t *result);
-int cinstate_db_update(void *dbptr, char *liid, uint32_t cin,
+int cinstate_db_update(openli_cinstatedb_t *dbptr, char *liid, uint32_t cin,
         struct cinstate_t *update);
-int cinstate_db_remove_by_cin(void *dbptr, char *liid, uint32_t cin);
-int cinstate_db_remove_by_liid(void *dbptr, char *liid);
+int cinstate_db_remove_by_cin(openli_cinstatedb_t *dbptr, char *liid, uint32_t cin);
+int cinstate_db_remove_by_liid(openli_cinstatedb_t *dbptr, char *liid);
 
 #endif

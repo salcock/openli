@@ -55,6 +55,7 @@
 #include "etsiencoding/etsiencoding.h"
 #include "yaml_modifier.h"
 #include "openli_epoll.h"
+#include "cinstatedb.h"
 
 #define MAX_ENCODED_RESULT_BATCH 10
 
@@ -275,7 +276,7 @@ typedef struct seqtracker_thread_data {
     void *zmq_recvpublished;
 
     uint8_t cinstate_enabled;
-    void *cinstatedb;
+    openli_cinstatedb_t cinstatedb;
 
     exporter_intercept_state_t *intercepts;
     removed_intercept_t *removedints;
