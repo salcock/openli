@@ -192,6 +192,9 @@ void destroy_colsync_udp_sink(colsync_udp_sink_t *sink) {
     if (sink->attached_liid) {
         free(sink->attached_liid);
     }
+    if (sink->attached_authcc) {
+        free(sink->attached_authcc);
+    }
     if (sink->key) {
         free(sink->key);
     }
@@ -373,6 +376,20 @@ void clean_sync_data(collector_sync_t *sync) {
 
 }
 
+static ipintercept_t *find_ipintercept_by_liid_authcc(collector_sync_t *sync,
+        char *liid, char *authcc) {
+
+    ipintercept_t *ipint;
+    char key[2048];
+
+    if (liid == NULL || authcc == NULL) {
+        return NULL;
+    }
+    snprintf(key, sizeof(key), "%s-%s", authcc, liid);
+    HASH_FIND(hh_liid, sync->ipintercepts, key, strlen(key), ipint);
+    return ipint;
+}
+
 static void create_unused_udpsink_mapping_from_sink(collector_sync_t *sync,
         colsync_udp_sink_t *sink) {
 
@@ -405,6 +422,7 @@ static void create_unused_udpsink_mapping_from_sink(collector_sync_t *sync,
     config->encapfmt = sink->encapfmt;
     config->cin = sink->cin;
     config->liid = strdup(sink->attached_liid);
+    config->authcc = strdup(sink->attached_authcc);
 
     map = calloc(1, sizeof(saved_udpsink_mapping_t));
     map->config = config;
@@ -427,11 +445,14 @@ static void halt_udp_sink_thread(colsync_udp_sink_t *sink) {
     msg = calloc(1, sizeof(openli_export_recv_t));
     msg->type = OPENLI_EXPORT_INTERCEPT_OVER;
     msg->data.cept.liid = strdup(sink->attached_liid);
+    msg->data.cept.authcc = strdup(sink->attached_authcc);
     msg->data.cept.cepttype = OPENLI_INTERCEPT_TYPE_IP;
     publish_openli_msg(sink->zmq_control, msg);
 
     free(sink->attached_liid);
     sink->attached_liid = NULL;
+    free(sink->attached_authcc);
+    sink->attached_authcc = NULL;
 
     zmq_close(sink->zmq_control);
     sink->zmq_control = NULL;
@@ -448,8 +469,8 @@ static int create_udp_sink_thread(collector_sync_t *sync,
     struct timeval tv;
     openli_export_recv_t *msg;
 
-    HASH_FIND(hh_liid, sync->ipintercepts, config->liid, strlen(config->liid),
-            ipint);
+    ipint = find_ipintercept_by_liid_authcc(sync, config->liid,
+            config->authcc);
     if (!ipint) {
         if (sync->instruct_log) {
             logger(LOG_INFO, "OpenLI: received UDP sink configuration for LIID %s, but this LIID is unknown?", config->liid);
@@ -481,6 +502,7 @@ static int create_udp_sink_thread(collector_sync_t *sync,
     }
 
     sink->attached_liid = strdup(config->liid);
+    sink->attached_authcc = strdup(config->authcc);
     sink->cin = config->cin;
     sink->encapfmt = config->encapfmt;
     sink->direction = config->direction;
@@ -738,8 +760,8 @@ void sync_thread_publish_reload(collector_sync_t *sync) {
                 // it gets reconfigured later on
                 create_unused_udpsink_mapping_from_sink(sync, sink);
 
-                HASH_FIND(hh_liid, sync->ipintercepts, sink->attached_liid,
-                        strlen(sink->attached_liid), ipint);
+                ipint = find_ipintercept_by_liid_authcc(sync,
+                        sink->attached_liid, sink->attached_authcc);
                 if (ipint) {
                     create_ipiri_job_from_vendor(sync, ipint, sink->cin,
                            OPENLI_IPIRI_ENDWHILEACTIVE);
@@ -1355,7 +1377,7 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sync->ipintercepts, ipr->liid, strlen(ipr->liid), ipint);
+    ipint = find_ipintercept_by_liid_authcc(sync, ipr->liid, ipr->authcc);
     if (!ipint) {
         if (sync->instruct_log) {
             logger(LOG_INFO,
@@ -1411,7 +1433,7 @@ static int modify_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
     sync_sendq_t *tmp, *sendq;
 
 
-    HASH_FIND(hh_liid, sync->ipintercepts, ipr->liid, strlen(ipr->liid), ipint);
+    ipint = find_ipintercept_by_liid_authcc(sync, ipr->liid, ipr->authcc);
     if (!ipint) {
         if (sync->instruct_log) {
             logger(LOG_INFO,
@@ -1469,7 +1491,7 @@ static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
     sync_sendq_t *tmp, *sendq;
 
 
-    HASH_FIND(hh_liid, sync->ipintercepts, ipr->liid, strlen(ipr->liid), ipint);
+    ipint = find_ipintercept_by_liid_authcc(sync, ipr->liid, ipr->authcc);
     if (!ipint) {
         if (sync->instruct_log) {
             logger(LOG_INFO,
@@ -1825,7 +1847,7 @@ static void update_liid_mapping_from_email_intercept(collector_sync_t *sync,
         }
         pthread_rwlock_wrlock(sync->liid_agency_mutex);
         remove_liid_to_agency_map_entry(&(sync->liid_agency_map->map),
-                decode->common.liid);
+                decode->common.liid_key);
         pthread_rwlock_unlock(sync->liid_agency_mutex);
     } else if (msgtype == OPENLI_PROTO_MODIFY_EMAILINTERCEPT) {
         if (decode_emailintercept_modify(provmsg, msglen, decode) < 0) {
@@ -1834,7 +1856,7 @@ static void update_liid_mapping_from_email_intercept(collector_sync_t *sync,
         }
         pthread_rwlock_wrlock(sync->liid_agency_mutex);
         update_liid_to_agency_map(&(sync->liid_agency_map->map),
-                decode->common.liid, decode->common.targetagency);
+                decode->common.liid_key, decode->common.targetagency);
         pthread_rwlock_unlock(sync->liid_agency_mutex);
     } else if (msgtype == OPENLI_PROTO_START_EMAILINTERCEPT) {
         if (decode_emailintercept_start(provmsg, msglen, decode) < 0) {
@@ -1843,7 +1865,7 @@ static void update_liid_mapping_from_email_intercept(collector_sync_t *sync,
         }
         pthread_rwlock_wrlock(sync->liid_agency_mutex);
         update_liid_to_agency_map(&(sync->liid_agency_map->map),
-                decode->common.liid, decode->common.targetagency);
+                decode->common.liid_key, decode->common.targetagency);
         pthread_rwlock_unlock(sync->liid_agency_mutex);
 
     }
@@ -1874,7 +1896,7 @@ static int x2x3_sync_voipintercept(collector_sync_t *sync, uint8_t *provmsg,
         }
         pthread_rwlock_wrlock(sync->liid_agency_mutex);
         remove_liid_to_agency_map_entry(&(sync->liid_agency_map->map),
-                decode->common.liid);
+                decode->common.liid_key);
         pthread_rwlock_unlock(sync->liid_agency_mutex);
     } else if (msgtype == OPENLI_PROTO_MODIFY_VOIPINTERCEPT) {
         if (decode_voipintercept_modify(provmsg, msglen, decode) < 0) {
@@ -1883,7 +1905,7 @@ static int x2x3_sync_voipintercept(collector_sync_t *sync, uint8_t *provmsg,
         }
         pthread_rwlock_wrlock(sync->liid_agency_mutex);
         update_liid_to_agency_map(&(sync->liid_agency_map->map),
-                decode->common.liid, decode->common.targetagency);
+                decode->common.liid_key, decode->common.targetagency);
         pthread_rwlock_unlock(sync->liid_agency_mutex);
 
     } else {
@@ -1893,7 +1915,7 @@ static int x2x3_sync_voipintercept(collector_sync_t *sync, uint8_t *provmsg,
         }
         pthread_rwlock_wrlock(sync->liid_agency_mutex);
         update_liid_to_agency_map(&(sync->liid_agency_map->map),
-                decode->common.liid, decode->common.targetagency);
+                decode->common.liid_key, decode->common.targetagency);
         pthread_rwlock_unlock(sync->liid_agency_mutex);
     }
 
@@ -2032,7 +2054,7 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
     if (sync->pubsockcount <= 1) {
         cept->common.seqtrackerid = 0;
     } else {
-        cept->common.seqtrackerid = hash_liid(cept->common.liid) % sync->pubsockcount;
+        cept->common.seqtrackerid = hash_liid(cept->common.liid_key) % sync->pubsockcount;
     }
 
     if (cept->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
@@ -2057,8 +2079,8 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
                 cept->common.tostart_time, cept->common.toend_time);
     }
 
-    HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
-            cept->common.liid_len, cept);
+    HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid_key,
+            cept->common.liid_key_len, cept);
 
     add_new_intercept_time_event(&(sync->upcoming_intercept_events), cept,
             &(cept->common));
@@ -2069,8 +2091,8 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
     pthread_mutex_unlock(sync->glob->stats_mutex);
 
     pthread_rwlock_wrlock(sync->liid_agency_mutex);
-    update_liid_to_agency_map(&(sync->liid_agency_map->map), cept->common.liid,
-            cept->common.targetagency);
+    update_liid_to_agency_map(&(sync->liid_agency_map->map),
+            cept->common.liid_key, cept->common.targetagency);
     pthread_rwlock_unlock(sync->liid_agency_mutex);
 
     expmsg = create_intercept_details_msg(&(cept->common),
@@ -2155,7 +2177,8 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
         if (sink->attached_liid == NULL) {
             continue;
         }
-        if (strcmp(sink->attached_liid, ipint->common.liid) == 0) {
+        if (strcmp(sink->attached_liid, ipint->common.liid) == 0 &&
+                strcmp(sink->attached_authcc, ipint->common.authcc) == 0) {
             // send an IRI END
             create_ipiri_job_from_vendor(sync, ipint, sink->cin,
                    OPENLI_IPIRI_ENDWHILEACTIVE);
@@ -2166,7 +2189,7 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
 
     pthread_rwlock_wrlock(sync->liid_agency_mutex);
     remove_liid_to_agency_map_entry(&(sync->liid_agency_map->map),
-            ipint->common.liid);
+            ipint->common.liid_key);
     pthread_rwlock_unlock(sync->liid_agency_mutex);
 
     withdraw_xid(sync, ipint);
@@ -2264,8 +2287,8 @@ static int update_modified_intercept(collector_sync_t *sync,
             &(modified->common), OPENLI_INTERCEPT_TYPE_IP, &changed);
 
     pthread_rwlock_wrlock(sync->liid_agency_mutex);
-    update_liid_to_agency_map(&(sync->liid_agency_map->map), ipint->common.liid,
-            ipint->common.targetagency);
+    update_liid_to_agency_map(&(sync->liid_agency_map->map),
+            ipint->common.liid_key, ipint->common.targetagency);
     pthread_rwlock_unlock(sync->liid_agency_mutex);
 
     if (ipint->accesstype != modified->accesstype) {
@@ -2294,7 +2317,8 @@ static int update_modified_intercept(collector_sync_t *sync,
         pthread_mutex_lock(&(sync->glob->mutex));
         HASH_ITER(hh, sync->glob->udpsinks, sink, tmpsink) {
             if (sink->attached_liid &&
-                    strcmp(ipint->common.liid, sink->attached_liid) == 0) {
+                    strcmp(ipint->common.liid, sink->attached_liid) == 0 &&
+                    strcmp(ipint->common.authcc, sink->attached_authcc) == 0) {
                 expmsg = create_intercept_details_msg(&(modified->common),
                         OPENLI_INTERCEPT_TYPE_IP);
                 expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
@@ -2326,8 +2350,8 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sync->ipintercepts, modified->common.liid,
-            modified->common.liid_len, ipint);
+    HASH_FIND(hh_liid, sync->ipintercepts, modified->common.liid_key,
+            modified->common.liid_key_len, ipint);
 
     if (!ipint) {
         return insert_new_ipintercept(sync, modified);
@@ -2352,8 +2376,8 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sync->ipintercepts, torem->common.liid,
-            torem->common.liid_len, ipint);
+    HASH_FIND(hh_liid, sync->ipintercepts, torem->common.liid_key,
+            torem->common.liid_key_len, ipint);
 
     if (!ipint) {
         logger(LOG_INFO,
@@ -2568,8 +2592,8 @@ static int withdraw_collector_udp_sink(collector_sync_t *sync, uint8_t *provmsg,
         if (sink->attached_liid) {
             ipintercept_t *ipint;
             create_unused_udpsink_mapping_from_sink(sync, sink);
-            HASH_FIND(hh_liid, sync->ipintercepts, sink->attached_liid,
-                    strlen(sink->attached_liid), ipint);
+            ipint = find_ipintercept_by_liid_authcc(sync, sink->attached_liid,
+                    sink->attached_authcc);
             if (ipint) {
                 create_ipiri_job_from_vendor(sync, ipint, sink->cin,
                         OPENLI_IPIRI_ENDWHILEACTIVE);
@@ -2829,8 +2853,8 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     }
 
     /* Check if we already have this intercept */
-    HASH_FIND(hh_liid, sync->ipintercepts, cept->common.liid,
-            cept->common.liid_len, x);
+    HASH_FIND(hh_liid, sync->ipintercepts, cept->common.liid_key,
+            cept->common.liid_key_len, x);
 
     if (x) {
         /* Duplicate LIID */

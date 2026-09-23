@@ -49,6 +49,9 @@ static void destroy_known_liid(encoder_liid_state_t *known) {
     if (known->liid_key) {
         free(known->liid_key);
     }
+    if (known->liid) {
+        free(known->liid);
+    }
     if (known->authcc) {
         free(known->authcc);
     }
@@ -76,6 +79,9 @@ void destroy_encoding_job(openli_encoding_job_t *job, uint8_t free_request) {
     }
     if (job->liid) {
         free(job->liid);
+    }
+    if (job->liid_key) {
+        free(job->liid_key);
     }
     if (job->authcc) {
         free(job->authcc);
@@ -526,9 +532,13 @@ static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
         char *liid, char *authcc, char *delivcc, char *operatorid) {
 
     encoder_liid_state_t *found;
+    int keylen;
 
     found = calloc(1, sizeof(encoder_liid_state_t));
-    found->liid_key = strdup(liid);
+    keylen = strlen(authcc) + strlen(liid) + 2;
+    found->liid_key = malloc(keylen);
+    snprintf(found->liid_key, keylen, "%s-%s", authcc, liid);
+    found->liid = strdup(liid);
     found->authcc = strdup(authcc);
     if (delivcc) {
         found->delivcc = strdup(delivcc);
@@ -543,9 +553,9 @@ static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
     }
 
     found->fwd_index = assign_liid_to_forwarder(enc->fwd_assigner);
-        logger(LOG_INFO,
+    logger(LOG_INFO,
             "OpenLI: encoder worker %d assigned LIID %s to forwarding thread %zu",
-            enc->workerid, liid, found->fwd_index);
+            enc->workerid, found->liid_key, found->fwd_index);
 
     HASH_ADD_KEYPTR(hh, enc->known_liids, found->liid_key,
             strlen(found->liid_key), found);
@@ -557,7 +567,7 @@ static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
 
     uint16_t liidlen, l;
 
-    liidlen = strlen(job->liid);
+    liidlen = strlen(job->liid_key);
     l = htons(liidlen);
 
     memset(res, 0, sizeof(openli_encoded_result_t));
@@ -567,7 +577,7 @@ static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
     res->msgbody->encoded = malloc(liidlen + sizeof(uint16_t));
 
     memcpy(res->msgbody->encoded, &l, sizeof(uint16_t));
-    memcpy(res->msgbody->encoded + sizeof(uint16_t), job->liid, liidlen);
+    memcpy(res->msgbody->encoded + sizeof(uint16_t), job->liid_key, liidlen);
 
     res->msgbody->len = job->origreq->data.rawip.ipclen +
             (liidlen + sizeof(uint16_t));
@@ -629,7 +639,7 @@ static int encode_templated_ipiri(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
+                body->len, NULL, 0, job->origreq->type, job->liid_key) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             free_ipiri_parameters(params);
             return -1;
@@ -676,7 +686,7 @@ static int encode_templated_emailiri(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
+                body->len, NULL, 0, job->origreq->type, job->liid_key) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -745,7 +755,7 @@ static int encode_templated_cinreset(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, OPENLI_EXPORT_CIN_RESET, job->liid) < 0) {
+                body->len, NULL, 0, OPENLI_EXPORT_CIN_RESET, job->liid_key) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -786,7 +796,7 @@ static int encode_templated_segflag(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, restype, job->liid) < 0) {
+                body->len, NULL, 0, restype, job->liid_key) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -880,7 +890,7 @@ static int encode_templated_epscc(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
+                body->len, NULL, 0, job->origreq->type, job->liid_key) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -932,7 +942,7 @@ static int encode_templated_epsiri(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
+                body->len, NULL, 0, job->origreq->type, job->liid_key) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -984,7 +994,7 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
+                body->len, NULL, 0, job->origreq->type, job->liid_key) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -1045,7 +1055,7 @@ static int encode_templated_umtscc(openli_encoder_t *enc,
         if (create_etsi_encoded_result(res, hdr_tplate,
                 umtscc_tplate->cc_content.cc_wrap,
                 umtscc_tplate->cc_content.cc_wrap_len, NULL, 0,
-                job->origreq->type, job->liid) < 0) {
+                job->origreq->type, job->liid_key) < 0) {
             return -1;
         }
     }
@@ -1131,7 +1141,7 @@ static int encode_templated_emailcc(openli_encoder_t *enc,
         if (create_etsi_encoded_result(res, hdr_tplate,
                 emailcc_tplate->cc_content.cc_wrap,
                 emailcc_tplate->cc_content.cc_wrap_len,
-                NULL, 0, job->origreq->type, job->liid) < 0) {
+                NULL, 0, job->origreq->type, job->liid_key) < 0) {
             return -1;
         }
     }
@@ -1190,7 +1200,7 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
         if (create_etsi_encoded_result(res, hdr_tplate,
                 ipcc_tplate->cc_content.cc_wrap,
                 ipcc_tplate->cc_content.cc_wrap_len,
-                NULL, 0, job->origreq->type, job->liid) < 0) {
+                NULL, 0, job->origreq->type, job->liid_key) < 0) {
             return -1;
         }
     }
@@ -1351,6 +1361,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
     size_t next;
     uint8_t fullbatch = 0;
     encoder_liid_state_t *found = NULL;
+    char liid_key[2048];
 
     openli_encoding_job_t job;
 
@@ -1382,11 +1393,12 @@ static int process_job(openli_encoder_t *enc, void *socket) {
             break;
         }
 
-        if (job.liid == NULL) {
+        if (job.liid == NULL || job.authcc == NULL) {
             goto encodejoberror;
         }
 
-        HASH_FIND(hh, enc->known_liids, job.liid, strlen(job.liid), found);
+        snprintf(liid_key, sizeof(liid_key), "%s-%s", job.authcc, job.liid);
+        HASH_FIND(hh, enc->known_liids, liid_key, strlen(liid_key), found);
 
         if (job.origreq == NULL) {
             /* This is a message to tell us that the intercept is no
@@ -1394,9 +1406,9 @@ static int process_job(openli_encoder_t *enc, void *socket) {
             if (found) {
                 integrity_check_state_t *ics, *tmp;
                 HASH_DELETE(hh, enc->known_liids, found);
-                // remove all integrity state chains for this LIID
+                // remove all integrity state chains for this intercept
                 HASH_ITER(hh, enc->integrity_state, ics, tmp) {
-                    if (strcmp(job.liid, ics->liid_key) != 0) {
+                    if (strcmp(liid_key, ics->liid_key) != 0) {
                         continue;
                     }
                     HASH_DELETE(hh, enc->integrity_state, ics);

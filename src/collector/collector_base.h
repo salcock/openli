@@ -150,6 +150,7 @@ typedef struct colsync_udp_sink {
     char *sourceport;
 
     char *attached_liid;
+    char *attached_authcc;
     pthread_t tid;
 
     void *zmq_control;
@@ -374,6 +375,7 @@ typedef struct shared_liid_to_agency_mapping {
 
 typedef struct encoder_liid_state {
     char *liid_key;
+    char *liid;
     char *authcc;
     char *delivcc;
     uint8_t no_agency_map_warning;
@@ -397,6 +399,7 @@ struct integrity_check_state {
 
     char *key;
     char *liid_key;
+    char *liid;
     char *authcc;
     char *delivcc;
     char *cinstr;
