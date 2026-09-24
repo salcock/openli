@@ -445,7 +445,7 @@ static inline int finalize_encoded_result(openli_encoded_result_t *res,
                 enc->etsidecoder, res->msgbody->encoded + res->preamblen,
                 res->msgbody->len - res->preamblen, job->encryptkey,
                 job->encryptkey_len) == NULL) {
-            logger(LOG_INFO, "OpenLI: unable to encrypt ETSI record (LIID: %s, type: %u) using aes-192-cbc", job->liid, type);
+            logger(LOG_INFO, "OpenLI: unable to encrypt ETSI record (LIID: %s, type: %u) using aes-192-cbc", job->liid_key, type);
             return -1;
         }
     }
@@ -1224,7 +1224,7 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
     openli_encoded_result_t *res = &(resarray[(*next)]);
 
     memset(res, 0, sizeof(openli_encoded_result_t));
-    snprintf(keystr, 1000, "%s-%s-%u", job->liid, job->cinstr,
+    snprintf(keystr, 1000, "%s-%s-%u", job->liid_key, job->cinstr,
             job->timefmt);
     JSLI(pval, enc->saved_intercept_templates, (const uint8_t *)keystr);
     if ((*pval)) {
