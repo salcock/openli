@@ -3055,6 +3055,9 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
+    if (mailint->common.targetagency == NULL && found->common.targetagency) {
+        mailint->common.targetagency = strdup(found->common.targetagency);
+    }
     if (set_agency_properties(state, &(mailint->common), cinfo) < 0) {
         goto cepterr;
     }
@@ -3243,6 +3246,10 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     if (parse_intercept_common_json(&voipjson, &(vint->common),
             "VOIP intercept", cinfo, false, state->epoll_fd) < 0) {
         goto cepterr;
+    }
+
+    if (vint->common.targetagency == NULL && found->common.targetagency) {
+        vint->common.targetagency = strdup(found->common.targetagency);
     }
 
     if (set_agency_properties(state, &(vint->common), cinfo) < 0) {
@@ -3444,6 +3451,9 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         ipint->common.tomediate = found->common.tomediate;
     }
 
+    if (ipint->common.targetagency == NULL && found->common.targetagency) {
+        ipint->common.targetagency = strdup(found->common.targetagency);
+    }
     if (set_agency_properties(state, &(ipint->common), cinfo) < 0) {
         goto cepterr;
     }
