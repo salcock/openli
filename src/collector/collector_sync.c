@@ -734,6 +734,31 @@ static inline void push_coreserver_msg(collector_sync_t *sync,
     pthread_mutex_unlock(&(sync->glob->mutex));
 }
 
+void sync_thread_publish_session_purge(collector_sync_t *sync) {
+
+    sync_sendq_t *qtmp, *sendq;
+    openli_pushed_t msg;
+    ip_to_session_t *iter, *tmp;
+
+    HASH_ITER(hh, (sync_sendq_t *)sync->glob->collector_queues, sendq, qtmp) {
+        memset(&msg, 0, sizeof(openli_pushed_t));
+        msg.type = OPENLI_PUSH_PURGE_SESSIONS;
+        libtrace_message_queue_put(sendq->q, (void *)(&msg));
+    }
+    free_all_users(sync->allusers);
+
+    HASH_ITER(hh, sync->activeips, iter, tmp) {
+        HASH_DELETE(hh, sync->activeips, iter);
+        free(iter->session);
+        free(iter->owner);
+        free(iter);
+    }
+
+    sync->allusers = NULL;
+    sync->activeips = NULL;
+    sync->radiusplugin->uncouple_parsed_data(sync->radiusplugin);
+}
+
 static inline void push_hup_reload_to_collectors(libtrace_message_queue_t *q) {
     openli_pushed_t msg;
 

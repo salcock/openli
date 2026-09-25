@@ -59,6 +59,7 @@
 volatile int reload_config = 0;
 volatile int config_write_required = 0;
 volatile sig_atomic_t collector_halt = 0;
+volatile int purge_session_flag = 0;
 
 static void cleanup_signal(int signal UNUSED)
 {
@@ -67,6 +68,10 @@ static void cleanup_signal(int signal UNUSED)
 
 static void reload_signal(int signal UNUSED) {
     reload_config = 1;
+}
+
+static void purge_sessions(int signal UNUSED) {
+    purge_session_flag = 1;
 }
 
 static void usage(char *prog) {
@@ -327,6 +332,26 @@ static void remove_mirrors_from_coreserver_fast_filters(colthread_local_t *loc)
 
 }
 
+static void purge_active_sessions(colthread_local_t *loc) {
+
+    ipv4_target_t *v4, *tmp;
+    ipv6_target_t *v6, *tmp2;
+
+    HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
+        free_all_ipsessions(&(v4->intercepts));
+        HASH_DELETE(hh, loc->activeipv4intercepts, v4);
+        free(v4);
+    }
+
+    HASH_ITER(hh, loc->activeipv6intercepts, v6, tmp2) {
+        free_all_ipsessions(&(v6->intercepts));
+        HASH_DELETE(hh, loc->activeipv6intercepts, v6);
+        free(v6->prefixstr);
+        free(v6);
+    }
+
+}
+
 static void process_incoming_messages(colthread_local_t *loc,
         openli_pushed_t *syncpush, collector_global_t *glob) {
 
@@ -336,6 +361,10 @@ static void process_incoming_messages(colthread_local_t *loc,
         populate_coreserver_fast_filters_from_global(loc, glob);
         pthread_rwlock_unlock(&(glob->config_mutex));
 
+    }
+
+    if (syncpush->type == OPENLI_PUSH_PURGE_SESSIONS) {
+        purge_active_sessions(loc);
     }
 
     if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
@@ -765,8 +794,6 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
     colinput_t *inp = (colinput_t *)global;
     collector_global_t *glob = inp->global;
     colthread_local_t *loc = (colthread_local_t *)tls;
-    ipv4_target_t *v4, *tmp;
-    ipv6_target_t *v6, *tmp2;
     openli_pushed_t syncpush;
     int zero = 0, i;
     sync_sendq_t *syncq, *sendq_hash;
@@ -883,19 +910,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
         free(loc->sctp_worker_queues);
     }
 
-    HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
-        free_all_ipsessions(&(v4->intercepts));
-        HASH_DELETE(hh, loc->activeipv4intercepts, v4);
-        free(v4);
-    }
-
-    HASH_ITER(hh, loc->activeipv6intercepts, v6, tmp2) {
-        free_all_ipsessions(&(v6->intercepts));
-        HASH_DELETE(hh, loc->activeipv6intercepts, v6);
-        free(v6->prefixstr);
-        free(v6);
-    }
-
+    purge_active_sessions(loc);
 
     HASH_ITER(hh, loc->ipcc_filters, flt, tmpflt) {
         HASH_DELETE(hh, loc->ipcc_filters, flt);
@@ -3146,6 +3161,11 @@ static void *start_ip_sync_thread(void *params) {
             reload_config = 0;
         }
 
+        if (purge_session_flag) {
+            sync_thread_publish_session_purge(sync);
+            purge_session_flag = 0;
+        }
+
         if (reload_config) {
             if (reload_collector_config(glob, sync) == -1) {
                 break;
@@ -3337,6 +3357,11 @@ int main(int argc, char *argv[]) {
     sigact.sa_flags = SA_RESTART;
 
     sigaction(SIGHUP, &sigact, NULL);
+
+    sigact.sa_handler = purge_sessions;
+    sigemptyset(&sigact.sa_mask);
+    sigact.sa_flags = SA_RESTART;
+    sigaction(SIGUSR1, &sigact, NULL);
 
     /* Read config to generate list of input sources */
     glob = parse_global_config(configfile);
