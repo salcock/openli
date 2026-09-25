@@ -335,7 +335,7 @@ void sip_worker_conclude_sip_call(openli_sip_worker_t *sipworker,
     timeout = (sync_epoll_t *)calloc(1, sizeof(sync_epoll_t));
 
     thisrtp->byematched = 1;
-    its.it_value.tv_sec = 30;
+    its.it_value.tv_sec = 5;
     its.it_value.tv_nsec = 0;
     its.it_interval.tv_sec = 0;
     its.it_interval.tv_nsec = 0;
