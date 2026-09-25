@@ -471,6 +471,7 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
         common->local = NULL;
         common->xids = NULL;
         common->xid_count = 0;
+        common->tomediate = OPENLI_INTERCEPT_OUTPUTS_UNSPECIFIED;
     }
 
     if (common->liid == NULL) {
@@ -663,12 +664,13 @@ static int update_intercept_common(intercept_common_t *parsed,
     MODIFY_STRING_MEMBER(parsed->delivcc, existing->delivcc, changed);
     existing->delivcc_len  = strlen(existing->delivcc);
 
-    if (parsed->tomediate != existing->tomediate) {
+    if (parsed->tomediate != existing->tomediate &&
+            parsed->tomediate != OPENLI_INTERCEPT_OUTPUTS_UNSPECIFIED) {
         existing->tomediate = parsed->tomediate;
         *changed = 1;
     }
 
-    if (parsed->destid != existing->destid) {
+    if (parsed->destid != existing->destid && parsed->destid != 0) {
         existing->destid = parsed->destid;
         *changed = 1;
     }
