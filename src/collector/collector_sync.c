@@ -659,6 +659,11 @@ static int update_collector_global_config(collector_sync_t *sync,
             newconfig, &rmqchanged);
     pthread_rwlock_unlock(sync->info_mutex);
 
+    pthread_rwlock_wrlock(&(sync->parent_global->email_config_mutex));
+    handle_email_config_changes(sync->parent_global,
+            &(sync->glob->configupdates), newconfig);
+    pthread_rwlock_unlock(&(sync->parent_global->email_config_mutex));
+
     handle_workerthread_config_changes(newconfig, &to_restart,
             &(sync->glob->configupdates));
 

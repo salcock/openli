@@ -150,6 +150,8 @@ int handle_rmq_config_changes(openli_RMQ_config_t *rmqconf,
 int handle_tls_config_changes(collector_global_t *glob,
         openli_yaml_config_pending_updates_t *pending, char *json,
         int *flagchanged, int *groupschanged);
+int handle_email_config_changes(collector_global_t *glob,
+        openli_yaml_config_pending_updates_t *pending, char *json);
 int handle_workerthread_config_changes(char *json, int *restart_confirmed,
         openli_yaml_config_pending_updates_t *pending);
 #endif

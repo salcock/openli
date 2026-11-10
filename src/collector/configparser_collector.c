@@ -894,12 +894,15 @@ int parse_collector_config(char *configfile, collector_global_t *glob) {
 char *collector_config_to_json(collector_global_t *glob) {
 
     json_object *jobj = json_object_new_object();
-    json_object *jthreads, *medtgts;
+    json_object *jthreads, *medtgts, *inputs, *emailtimeouts, *emailhdrs;
+    json_object *emailingest;
     const char *json_str;
     char *result;
     char buffer[1024];
     col_known_mediator_t *kmed, *ktmp;
     int connected = 0, total = 0;
+    colinput_t *inp, *inptmp;
+    string_set_t *hdr, *hdrtmp;
 
     pthread_rwlock_rdlock(&(glob->config_mutex));
     uuid_unparse(glob->sharedinfo.uuid, buffer);
@@ -969,6 +972,54 @@ char *collector_config_to_json(collector_global_t *glob) {
                 json_object_new_string(glob->sslconf.tlsgroups));
     }
 
+    inputs = json_object_new_array();
+    HASH_ITER(hh, glob->inputs, inp, inptmp) {
+        struct json_object *jinp = json_object_new_object();
+
+        if (inp->uri) {
+            json_object_object_add(jinp, "uri",
+                    json_object_new_string(inp->uri));
+        }
+        json_object_object_add(jinp, "threads",
+                json_object_new_int(inp->threadcount));
+
+        if (inp->filterstring) {
+            json_object_object_add(jinp, "filter",
+                    json_object_new_string(inp->filterstring));
+        }
+
+        if (inp->hasher_apply == OPENLI_HASHER_BALANCE) {
+            json_object_object_add(jinp, "hasher",
+                    json_object_new_string("balanced"));
+        } else if (inp->hasher_apply == OPENLI_HASHER_BIDIR) {
+            json_object_object_add(jinp, "hasher",
+                    json_object_new_string("bidirectional"));
+
+        } else if (inp->hasher_apply == OPENLI_HASHER_RADIUS) {
+            json_object_object_add(jinp, "hasher",
+                    json_object_new_string("radius"));
+        }
+
+        if (inp->coremap) {
+            json_object_object_add(jinp, "coremap",
+                    json_object_new_string(inp->coremap));
+        }
+
+        if (inp->vxlan_strip) {
+            json_object_object_add(jinp, "stripvxlan",
+                    json_object_new_int(inp->vxlan_port));
+        }
+
+        json_object_object_add(jinp, "reportdrops",
+                json_object_new_boolean(inp->report_drops));
+
+        json_object_object_add(jinp, "status",
+                json_object_new_string(inp->running ? "running" : "stopped"));
+
+        json_object_array_add(inputs, jinp);
+    }
+    json_object_object_add(jobj, "inputs", inputs);
+
     pthread_rwlock_unlock(&(glob->config_mutex));
 
     pthread_rwlock_rdlock(&glob->sipconfig_mutex);
@@ -990,6 +1041,65 @@ char *collector_config_to_json(collector_global_t *glob) {
     }
 
     pthread_rwlock_unlock(&glob->sipconfig_mutex);
+
+    pthread_rwlock_rdlock(&glob->email_config_mutex);
+
+    json_object_object_add(jobj, "maskpop3creds",
+            json_object_new_boolean(glob->mask_pop3_creds));
+    json_object_object_add(jobj, "maskimapcreds",
+            json_object_new_boolean(glob->mask_imap_creds));
+    json_object_object_add(jobj, "allowImapIdOverrides",
+            json_object_new_boolean(glob->allow_imap_id_overrides));
+    json_object_object_add(jobj, "delayedImapLoginIri",
+            json_object_new_boolean(glob->delayed_imap_id_override));
+    json_object_object_add(jobj, "emailingest-usetargetid",
+            json_object_new_boolean(glob->email_ingest_use_targetid));
+
+    if (glob->default_email_domain) {
+        json_object_object_add(jobj, "defaultemaildomain",
+                json_object_new_string(glob->default_email_domain));
+    }
+
+    emailhdrs = json_object_new_array();
+    HASH_ITER(hh, glob->email_forwarding_headers, hdr, hdrtmp) {
+        json_object *hdrstr;
+
+        hdrstr = json_object_new_string(hdr->term);
+        json_object_array_add(emailhdrs, hdrstr);
+    }
+
+    json_object_object_add(jobj, "emailforwardingheaders", emailhdrs);
+
+    emailtimeouts = json_object_new_object();
+    json_object_object_add(emailtimeouts, "smtp",
+            json_object_new_int(glob->email_timeouts.smtp));
+    json_object_object_add(emailtimeouts, "imap",
+            json_object_new_int(glob->email_timeouts.imap));
+    json_object_object_add(emailtimeouts, "pop3",
+            json_object_new_int(glob->email_timeouts.pop3));
+
+    json_object_object_add(jobj, "emailsessiontimeouts", emailtimeouts);
+
+
+    emailingest = json_object_new_object();
+    if (glob->emailconf.listenaddr) {
+        json_object_object_add(emailingest, "listenaddress",
+                json_object_new_string(glob->emailconf.listenaddr));
+    }
+    if (glob->emailconf.listenport) {
+        json_object_object_add(emailingest, "listenport",
+                json_object_new_string(glob->emailconf.listenport));
+    }
+    json_object_object_add(emailingest, "authpassword_set",
+            json_object_new_boolean(glob->emailconf.authrequired));
+    json_object_object_add(emailingest, "requiretls",
+            json_object_new_boolean(glob->emailconf.tlsrequired));
+    json_object_object_add(emailingest, "enabled",
+            json_object_new_boolean(glob->emailconf.enabled == 1));
+
+    json_object_object_add(jobj, "emailingest", emailingest);
+
+    pthread_rwlock_unlock(&glob->email_config_mutex);
 
     /* RabbitMQ configuration */
     json_object_object_add(jobj, "RMQenabled",
@@ -1052,6 +1162,7 @@ char *collector_config_to_json(collector_global_t *glob) {
                     json_object_new_string("disconnected"));
         }
     }
+
 
     json_str = json_object_to_json_string(jobj);
     result = strdup(json_str);

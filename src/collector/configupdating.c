@@ -329,6 +329,235 @@ static void update_thread_count_param(struct json_object *parsed,
     }
 }
 
+int handle_email_config_changes(collector_global_t *glob,
+        openli_yaml_config_pending_updates_t *pending, char *json) {
+
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    struct json_object *mask_imap, *mask_pop3, *allow_imap_id;
+    struct json_object *delayed_imap, *use_targetid, *def_domain;
+    struct json_object *timeouts_obj, *hdrs_obj;
+    int ret = -1;
+
+    mask_imap = mask_pop3 = allow_imap_id = delayed_imap = NULL;
+    use_targetid = def_domain = timeouts_obj = hdrs_obj = NULL;
+
+    tknr = json_tokener_new();
+    parsed = json_tokener_parse_ex(tknr, json, strlen(json));
+    if (parsed == NULL) {
+        logger(LOG_INFO, "OpenLI: unable to parse JSON configuration received from provisioner: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        goto emailfail;
+    }
+
+    if (json_object_object_get_ex(parsed, "emailsessiontimeouts",
+            &timeouts_obj) &&
+            json_object_is_type(timeouts_obj, json_type_object)) {
+        struct json_object *val;
+        openli_yaml_config_object_t prototimeouts[3];
+        openli_yaml_config_object_field_t fields[3];
+        char smtp_str[32], imap_str[32], pop3_str[32];
+
+        if (json_object_object_get_ex(timeouts_obj, "smtp", &val) &&
+                json_object_is_type(val, json_type_int)) {
+            glob->email_timeouts.smtp = json_object_get_int(val);
+        }
+        if (json_object_object_get_ex(timeouts_obj, "imap", &val) &&
+                json_object_is_type(val, json_type_int)) {
+            glob->email_timeouts.imap = json_object_get_int(val);
+        }
+        if (json_object_object_get_ex(timeouts_obj, "pop3", &val) &&
+                json_object_is_type(val, json_type_int)) {
+            glob->email_timeouts.pop3 = json_object_get_int(val);
+        }
+
+        snprintf(smtp_str, sizeof(smtp_str), "%u", glob->email_timeouts.smtp);
+        snprintf(imap_str, sizeof(imap_str), "%u", glob->email_timeouts.imap);
+        snprintf(pop3_str, sizeof(pop3_str), "%u", glob->email_timeouts.pop3);
+
+        fields[0].key = "smtp";
+        fields[0].value = smtp_str;
+        fields[0].is_string = false;
+
+        fields[1].key = "imap";
+        fields[1].value = imap_str;
+        fields[1].is_string = false;
+
+        fields[2].key = "pop3";
+        fields[2].value = pop3_str;
+        fields[2].is_string = false;
+
+        prototimeouts[0].fields = &(fields[0]);
+        prototimeouts[0].field_count = 1;
+        prototimeouts[1].fields = &(fields[1]);
+        prototimeouts[1].field_count = 1;
+        prototimeouts[2].fields = &(fields[2]);
+        prototimeouts[2].field_count = 1;
+
+        prepare_new_openli_yaml_config_update(pending);
+        generate_array_object_replace_openli_yaml_config_update(
+                &(pending->updates[pending->update_count]),
+                "emailsessiontimeouts", prototimeouts, 3, true);
+        pending->update_count ++;
+    }
+
+    if (json_object_object_get_ex(parsed, "emailforwardingheaders", &hdrs_obj)
+            && json_object_is_type(hdrs_obj, json_type_array)) {
+        size_t i, hdrcnt, len = json_object_array_length(hdrs_obj);
+        struct json_object *item;
+        string_set_t *new_headers = NULL;
+        char **hdr_strings = NULL;
+
+        if (len > 0) {
+            hdr_strings = calloc(len, sizeof(char *));
+        }
+        hdrcnt = 0;
+        for (i = 0; i < len; i++) {
+            item = json_object_array_get_idx(hdrs_obj, i);
+            if (json_object_is_type(item, json_type_string)) {
+                const char *s = json_object_get_string(item);
+                add_to_string_set(&new_headers, (char *)s);
+                hdr_strings[hdrcnt] = (char *)s;
+                hdrcnt ++;
+            }
+        }
+
+        purge_string_set(&(glob->email_forwarding_headers));
+        glob->email_forwarding_headers = new_headers;
+
+        prepare_new_openli_yaml_config_update(pending);
+        generate_array_replace_openli_yaml_config_update(
+                &pending->updates[pending->update_count],
+                "emailforwardingheaders",
+                (const char **)hdr_strings,
+                true, hdrcnt, true);
+        pending->update_count ++;
+        free(hdr_strings);
+    }
+
+    if (json_object_object_get_ex(parsed, "maskimapcreds", &mask_imap) &&
+            json_object_is_type(mask_imap, json_type_boolean)) {
+        uint8_t newval = json_object_get_boolean(mask_imap) ? 1 : 0;
+
+        if (newval != glob->mask_imap_creds) {
+            glob->mask_imap_creds = newval;
+            UPDATE_SCALAR_CONFIG(pending, "maskimapcreds",
+                    GENERATE_CONFIG_BOOLEAN(glob->mask_imap_creds), false,
+                    true);
+            logger(LOG_INFO,
+                    "OpenLI: email interception: %s IMAP credential masking",
+                    glob->mask_imap_creds ? "enabled" : "disabled");
+        }
+    }
+
+    if (json_object_object_get_ex(parsed, "maskpop3creds", &mask_pop3) &&
+            json_object_is_type(mask_pop3, json_type_boolean)) {
+        uint8_t newval = json_object_get_boolean(mask_pop3) ? 1 : 0;
+
+        if (newval != glob->mask_pop3_creds) {
+            glob->mask_pop3_creds = newval;
+            UPDATE_SCALAR_CONFIG(pending, "maskpop3creds",
+                    GENERATE_CONFIG_BOOLEAN(glob->mask_pop3_creds), false,
+                    true);
+            logger(LOG_INFO,
+                    "OpenLI: email interception: %s POP3 credential masking",
+                    glob->mask_pop3_creds ? "enabled" : "disabled");
+        }
+    }
+
+    if (json_object_object_get_ex(parsed, "allowImapIdOverrides",
+            &allow_imap_id) &&
+            json_object_is_type(allow_imap_id, json_type_boolean)) {
+        uint8_t newval = json_object_get_boolean(allow_imap_id) ? 1 : 0;
+
+        if (newval != glob->allow_imap_id_overrides) {
+            glob->allow_imap_id_overrides = newval;
+            UPDATE_SCALAR_CONFIG(pending, "allowImapIdOverrides",
+                    GENERATE_CONFIG_BOOLEAN(glob->allow_imap_id_overrides),
+                    false, true);
+            logger(LOG_INFO,
+                    "OpenLI: email interception: %s overriding of IMAP IDs",
+                    glob->allow_imap_id_overrides ? "enabled" : "disabled");
+        }
+    }
+
+    if (json_object_object_get_ex(parsed, "delayedImapLoginIri",
+            &delayed_imap) &&
+            json_object_is_type(delayed_imap, json_type_boolean)) {
+        uint8_t newval = json_object_get_boolean(delayed_imap) ? 1 : 0;
+
+        if (newval != glob->delayed_imap_id_override) {
+            glob->delayed_imap_id_override = newval;
+            UPDATE_SCALAR_CONFIG(pending, "delayedImapLoginIri",
+                    GENERATE_CONFIG_BOOLEAN(glob->delayed_imap_id_override),
+                    false, true);
+            logger(LOG_INFO,
+                    "OpenLI: email interception: %s delayed IRIs after IMAP login",
+                    glob->delayed_imap_id_override ? "enabled" : "disabled");
+        }
+    }
+
+    if (json_object_object_get_ex(parsed, "emailingest-usetargetid",
+            &use_targetid) &&
+            json_object_is_type(use_targetid, json_type_boolean)) {
+        uint8_t newval = json_object_get_boolean(use_targetid) ? 1 : 0;
+
+        if (newval != glob->email_ingest_use_targetid) {
+            glob->email_ingest_use_targetid = newval;
+            UPDATE_SCALAR_CONFIG(pending, "emailingest-usetargetid",
+                    GENERATE_CONFIG_BOOLEAN(glob->email_ingest_use_targetid),
+                    false, true);
+            logger(LOG_INFO,
+                    "OpenLI: email interception: %s matching on ingest target ID",
+                    glob->email_ingest_use_targetid ? "enabled" : "disabled");
+        }
+    }
+
+    if (json_object_object_get_ex(parsed, "defaultemaildomain", &def_domain)) {
+        const char *newdomain = NULL;
+
+        if (json_object_is_type(def_domain, json_type_string)) {
+            newdomain = json_object_get_string(def_domain);
+            if (newdomain[0] == '\0') {
+                newdomain = NULL;
+            }
+        } else if (json_object_is_type(def_domain, json_type_null)) {
+            newdomain = NULL;
+        }
+
+        if ((glob->default_email_domain == NULL && newdomain != NULL) ||
+                (glob->default_email_domain != NULL && newdomain == NULL) ||
+                (glob->default_email_domain && newdomain &&
+                    strcasecmp(newdomain, glob->default_email_domain) != 0)) {
+            if (glob->default_email_domain) {
+                free(glob->default_email_domain);
+                glob->default_email_domain = NULL;
+            }
+
+            if (newdomain) {
+                glob->default_email_domain = strdup((char *)newdomain);
+                UPDATE_SCALAR_CONFIG(pending, "defaultemaildomain",
+                        glob->default_email_domain, true, true);
+                logger(LOG_INFO, "OpenLI: setting default email domain to '%s'",
+                        glob->default_email_domain);
+            } else {
+                UPDATE_SCALAR_CONFIG(pending, "defaultemaildomain", "",
+                        true, true);
+                logger(LOG_INFO, "OpenLI: default email domain has been unset");
+            }
+        }
+    }
+
+    ret = 0;
+
+emailfail:
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return ret;
+}
+
 int handle_workerthread_config_changes(char *json, int *restart_confirmed,
         openli_yaml_config_pending_updates_t *pending) {
 
