@@ -487,6 +487,10 @@ static void write_new_key(FILE *fout, const char *key, int base_indent,
         } else {
             WRITE_UNQUOTED_VALUE(fout, update->value);
         }
+    } else if (update->type == UPDATE_ARRAY_ALL &&
+            update->array_objects_count > 0) {
+        fprintf(fout, "%*s%s:\n", base_indent, "", key);
+        append_array_object(fout, update, base_indent + 2);
     } else if (update->type == UPDATE_ARRAY_ALL ||
             (update->type == UPDATE_ARRAY_APPEND &&
              update->array_objects_count == 0)) {
@@ -809,13 +813,17 @@ static bool handle_array_replacement(openli_yaml_context_t *ctx,
     write_indent(fout, ctx->depth);
     fprintf(fout, "%s:\n", key);
 
-    for (j = 0; j < update->array_count; j++) {
-        write_indent(fout, ctx->depth + 1);
-        fprintf(fout, "-");
-        if (update->is_string) {
-            WRITE_QUOTED_VALUE(fout, update->array_values[j]);
-        } else {
-            WRITE_UNQUOTED_VALUE(fout, update->array_values[j]);
+    if (update->array_objects_count > 0) {
+        append_array_object(fout, update, (ctx->depth + 1) * 2);
+    } else {
+        for (j = 0; j < update->array_count; j++) {
+            write_indent(fout, ctx->depth + 1);
+            fprintf(fout, "-");
+            if (update->is_string) {
+                WRITE_QUOTED_VALUE(fout, update->array_values[j]);
+            } else {
+                WRITE_UNQUOTED_VALUE(fout, update->array_values[j]);
+            }
         }
     }
     *in_replaced_array = true;
@@ -1477,6 +1485,13 @@ void clean_openli_yaml_config_updates(
             free(updates->updates[i].array_objects);
             updates->updates[i].array_objects = NULL;
         }
+        if (updates->updates[i].array_values) {
+            for (j = 0; j < updates->updates[i].array_count; j++) {
+                free(updates->updates[i].array_values[j]);
+            }
+            free(updates->updates[i].array_values);
+            updates->updates[i].array_values = NULL;
+        }
     }
     updates->update_count = 0;
     //free(updates->updates);
@@ -1561,13 +1576,17 @@ void generate_array_replace_openli_yaml_config_update(
         openli_yaml_config_update_t *update, const char *key_path,
         const char **values, bool is_string, size_t value_count,
         bool create) {
+    size_t i;
 
     memset(update, 0, sizeof(openli_yaml_config_update_t));
 
     snprintf(update->key_path, OPENLI_YAML_MAX_KEY_LENGTH, "%s", key_path);
     update->is_string = is_string;
     update->type = UPDATE_ARRAY_ALL;
-    update->array_values = (char **)values;
+    update->array_values = calloc(value_count, sizeof(char *));
+    for (i = 0; i < value_count; i++) {
+        update->array_values[i] = strdup(values[i]);
+    }
     update->array_count = value_count;
     update->create_if_missing = create;
 }
@@ -1606,6 +1625,35 @@ void generate_array_remove_scalar_openli_yaml_config_update(
     snprintf(update->value, OPENLI_YAML_MAX_LINE, "%s", value);
     update->is_string = is_string;
     update->type = UPDATE_ARRAY_REMOVE_SCALAR;
+}
+
+void generate_array_object_replace_openli_yaml_config_update(
+        openli_yaml_config_update_t *update, const char *key_path,
+        openli_yaml_config_object_t *objects, size_t obj_count, bool create) {
+
+    size_t i,j;
+
+    memset(update, 0, sizeof(openli_yaml_config_update_t));
+    snprintf(update->key_path, OPENLI_YAML_MAX_KEY_LENGTH, "%s", key_path);
+    update->type = UPDATE_ARRAY_ALL;
+    update->array_objects = calloc(obj_count,
+            sizeof(openli_yaml_config_object_t));
+    update->array_objects_count = obj_count;
+    update->create_if_missing = create;
+
+    for (i = 0; i < update->array_objects_count; i++) {
+        update->array_objects[i].field_count = objects[i].field_count;
+        update->array_objects[i].fields = calloc(objects[i].field_count,
+                sizeof(openli_yaml_config_object_field_t));
+        for (j = 0; j < objects[i].field_count; j++) {
+            update->array_objects[i].fields[j].key =
+                    strdup(objects[i].fields[j].key);
+            update->array_objects[i].fields[j].value =
+                    strdup(objects[i].fields[j].value);
+            update->array_objects[i].fields[j].is_string =
+                    objects[i].fields[j].is_string;
+        }
+    }
 }
 
 size_t prepare_new_openli_yaml_config_update(

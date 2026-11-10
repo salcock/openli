@@ -115,5 +115,8 @@ void generate_array_remove_object_openli_yaml_config_update(
 void generate_array_remove_scalar_openli_yaml_config_update(
         openli_yaml_config_update_t *update, const char *key_path,
         const char *value, bool is_string);
+void generate_array_object_replace_openli_yaml_config_update(
+        openli_yaml_config_update_t *update, const char *key_path,
+        openli_yaml_config_object_t *objects, size_t obj_count, bool create);
 
 #endif
