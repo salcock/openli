@@ -570,7 +570,7 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
             glob->stats.packets_accepted += (stats->accepted - loc->accepted);
             pthread_mutex_unlock(&(glob->stats_mutex));
 
-            if (stats->dropped > loc->dropped) {
+            if (inp->report_drops && stats->dropped > loc->dropped) {
                 logger(LOG_INFO,
                         "%lu dropped %lu packets in last second (accepted %lu)",
                         (tick >> 32),
