@@ -65,6 +65,11 @@ uint8_t *decode_jmirror_from_udp_payload(uint8_t *payload, uint32_t plen,
     if (rem == 0) {
         return NULL;
     }
+
+    if (openli_is_l3_truncated(l3, rem)) {
+        return NULL;
+    }
+
     *bodylen = rem;
     return l3;
 }

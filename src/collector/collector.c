@@ -1480,7 +1480,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     uint8_t proto;
     int forwarded = 0, ret;
     int ipsynced = 0, voipsynced = 0, emailsynced = 0;
-    uint16_t offset;
+    uint16_t offset = 0;
     uint32_t servhash = 0;
 
     packet_info_t pinfo;
@@ -1606,7 +1606,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
         /* Is this from one of our ALU mirrors -- if yes, parse + strip it
          * for conversion to an ETSI record */
-        if (glob->alumirrors) {
+        if (glob->alumirrors && !(offset & 0x3FFF)) {
             pthread_rwlock_rdlock(&(glob->config_mutex));
             ret = check_alu_intercept(loc,
                     pkt, &pinfo, glob->alumirrors,
@@ -1622,7 +1622,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             }
         }
 
-        if (glob->jmirrors) {
+        if (glob->jmirrors && !(offset & 0x3FFF)) {
             pthread_rwlock_rdlock(&(glob->config_mutex));
             ret = check_jmirror_intercept(loc, pkt, &pinfo, glob->jmirrors,
                     loc->activemirrorintercepts);
@@ -1637,7 +1637,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             }
         }
 
-        if (glob->ciscomirrors) {
+        if (glob->ciscomirrors && !(offset & 0x3FFF)) {
             coreserver_t *cs;
             if ((cs = match_packet_to_coreserver(glob->ciscomirrors,
                     &pinfo, 1, NULL)) != NULL) {

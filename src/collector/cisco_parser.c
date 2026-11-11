@@ -55,15 +55,25 @@ uint8_t *decode_cisco_from_udp_payload(uint8_t *payload, uint32_t plen,
     }
     rem = plen;
     header = (ciscomirror_hdr_t *)payload;
-    *shimintid = ciscomirror_get_intercept_id(header);
+
+    if (shimintid) {
+        *shimintid = ciscomirror_get_intercept_id(header);
+    }
 
     rem -= sizeof(ciscomirror_hdr_t);
     l3 = ((uint8_t *)header) + sizeof(ciscomirror_hdr_t);
 
     if (rem == 0) {
-        return 0;
+        return NULL;
     }
-    *bodylen = rem;
+
+    if (openli_is_l3_truncated(l3, rem)) {
+        return NULL;
+    }
+
+    if (bodylen) {
+        *bodylen = rem;
+    }
     return l3;
 }
 
@@ -158,6 +168,11 @@ libtrace_packet_t *strip_cisco_mirror_header(libtrace_packet_t *pkt) {
     payload = get_udp_payload(pkt, &rem, NULL, NULL);
 
     if (payload == NULL || rem <= 4) {
+        return NULL;
+    }
+
+    /* Make sure we have a complete, valid packet */
+    if (decode_cisco_from_udp_payload(payload, rem, NULL, NULL) == NULL) {
         return NULL;
     }
 

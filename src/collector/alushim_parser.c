@@ -147,6 +147,10 @@ uint8_t *decode_alushim_from_udp_payload(uint8_t *payload, uint32_t plen,
         return NULL;
     }
 
+    if (openli_is_l3_truncated(l3, rem)) {
+        return NULL;
+    }
+
     /* Use the session ID from the shim as the CIN */
     *cin = ntohl(aluhdr->sessionid);
     *dir = alushim_get_direction(aluhdr);

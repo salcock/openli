@@ -104,6 +104,8 @@ libtrace_packet_t *openli_copy_packet(libtrace_packet_t *pkt);
 size_t openli_convert_hexstring_to_binary(const char *src, uint8_t *space,
         size_t maxspace);
 
+int openli_is_l3_truncated(uint8_t *l3, uint32_t rem);
+
 char *ltrim(char *s);
 char *rtrim(char *s);
 

@@ -1027,5 +1027,56 @@ char *rtrim(char *s) {
     return s;
 }
 
+int openli_is_l3_truncated(uint8_t *l3, uint32_t rem) {
+    uint16_t tlen;
+    uint8_t ihl;
+    static time_t last_log = 0;
+    time_t prev = __atomic_load_n(&last_log, __ATOMIC_RELAXED);
+    time_t now;
+
+    if (!l3 || rem < 20) {
+        return 1;
+    }
+
+    if ((l3[0] >> 4) == 4) {
+        ihl = (l3[0] & 0x0F) * 4;
+        tlen = (((uint16_t )l3[2]) << 8) + l3[3];
+
+        /* IPv4 -- confirm we have a full untruncated frame */
+        if (ihl < 20 || rem < ihl || rem < tlen || tlen < ihl) {
+            goto logcheck;
+        }
+
+        return 0;
+    } else if ((l3[0] >> 4) == 6) {
+        tlen = (((uint16_t )l3[4]) << 8) + l3[5];
+        /* IPv6 -- confirm we have a full untruncated frame */
+        if (rem < 40 || rem < (uint32_t)(tlen) + 40) {
+            goto logcheck;
+        }
+        return 0;
+    }
+
+    /* unknown IP version? */
+    return -1;
+
+logcheck:
+    /* At the moment, we only use this method when looking at
+     * vendor mirrored traffic so we can specifically mention
+     * mirror interfaces in the log message.
+     *
+     * If we start calling it elsewhere, then we'll need to
+     * revisit the log message.
+     */
+    now = time(NULL);
+    if (now >= prev + 60 &&
+            __atomic_compare_exchange_n(&last_log, &prev, now, false,
+                    __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+        logger(LOG_WARNING, "OpenLI: ignoring truncated or fragmented IP packet received via mirror interface -- recommend either increasing MTU to prevent fragmentation or increasing capture snap length to avoid truncation");
+    }
+    return 1;
+
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 
