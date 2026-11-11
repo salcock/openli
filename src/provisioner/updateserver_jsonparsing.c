@@ -62,6 +62,7 @@ static const char *collector_restart_required_keys[] = {
     "emailthreads",
     "gtpthreads",
     "sctpthreads",
+    "inputs",
     NULL
 };
 

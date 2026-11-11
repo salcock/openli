@@ -747,7 +747,7 @@ static int collector_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value,
-                    "delayedImapLoginIri") == 0) {
+                    "delayedimaploginiri") == 0) {
 
         glob->delayed_imap_id_override = config_check_onoff((char *)value->data.scalar.value);
         return 0;
@@ -1048,9 +1048,9 @@ char *collector_config_to_json(collector_global_t *glob) {
             json_object_new_boolean(glob->mask_pop3_creds));
     json_object_object_add(jobj, "maskimapcreds",
             json_object_new_boolean(glob->mask_imap_creds));
-    json_object_object_add(jobj, "allowImapIdOverrides",
+    json_object_object_add(jobj, "allowimapidoverrides",
             json_object_new_boolean(glob->allow_imap_id_overrides));
-    json_object_object_add(jobj, "delayedImapLoginIri",
+    json_object_object_add(jobj, "delayedimaploginiri",
             json_object_new_boolean(glob->delayed_imap_id_override));
     json_object_object_add(jobj, "emailingest-usetargetid",
             json_object_new_boolean(glob->email_ingest_use_targetid));

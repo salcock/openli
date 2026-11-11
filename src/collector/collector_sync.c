@@ -657,6 +657,10 @@ static int update_collector_global_config(collector_sync_t *sync,
 
     handle_rmq_config_changes(sync->rmqconfig, &(sync->glob->configupdates),
             newconfig, &rmqchanged);
+
+    handle_input_config_changes(sync->parent_global,
+            &(sync->glob->configupdates), newconfig);
+
     pthread_rwlock_unlock(sync->info_mutex);
 
     pthread_rwlock_wrlock(&(sync->parent_global->email_config_mutex));

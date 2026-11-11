@@ -25,9 +25,53 @@
  */
 
 #include <json-c/json.h>
+#include <libtrace.h>
+#include <libtrace_parallel.h>
 
 #include "logger.h"
 #include "collector.h"
+
+static void stop_collector_input(collector_global_t *glob, colinput_t *inp) {
+    char prefix[1024];
+    char locname[1048];
+
+    colthread_local_t *loc = NULL;
+    int i;
+
+    if (!inp->running || !inp->trace) {
+        return;
+    }
+
+    logger(LOG_INFO, "OpenLI collector: stopping input %s for reconfiguration",
+            inp->uri);
+
+    snprintf(prefix, sizeof(prefix), "%s-%s-",
+            trace_get_uri_format(inp->trace), trace_get_uri_body(inp->trace));
+    trace_pstop(inp->trace);
+    trace_join(inp->trace);
+    trace_destroy(inp->trace);
+    inp->trace = NULL;
+
+    for (i = 0; i < inp->threadcount; i++) {
+        snprintf(locname, sizeof(locname), "%s%d", prefix, i);
+        HASH_FIND(hh, glob->collocals, locname, strlen(locname), loc);
+        if (loc) {
+            HASH_DELETE(hh, glob->collocals, loc);
+            if (loc->localname) {
+                free(loc->localname);
+            }
+            free(loc);
+        }
+    }
+
+    if (inp->filter) {
+        trace_destroy_filter(inp->filter);
+        inp->filter = NULL;
+    }
+
+    inp->running = 0;
+    inp->start_at = 0;
+}
 
 int handle_rmq_config_changes(openli_RMQ_config_t *rmqconf,
         openli_yaml_config_pending_updates_t *pending, char *json,
@@ -465,14 +509,14 @@ int handle_email_config_changes(collector_global_t *glob,
         }
     }
 
-    if (json_object_object_get_ex(parsed, "allowImapIdOverrides",
+    if (json_object_object_get_ex(parsed, "allowimapidoverrides",
             &allow_imap_id) &&
             json_object_is_type(allow_imap_id, json_type_boolean)) {
         uint8_t newval = json_object_get_boolean(allow_imap_id) ? 1 : 0;
 
         if (newval != glob->allow_imap_id_overrides) {
             glob->allow_imap_id_overrides = newval;
-            UPDATE_SCALAR_CONFIG(pending, "allowImapIdOverrides",
+            UPDATE_SCALAR_CONFIG(pending, "allowimapidoverrides",
                     GENERATE_CONFIG_BOOLEAN(glob->allow_imap_id_overrides),
                     false, true);
             logger(LOG_INFO,
@@ -481,14 +525,14 @@ int handle_email_config_changes(collector_global_t *glob,
         }
     }
 
-    if (json_object_object_get_ex(parsed, "delayedImapLoginIri",
+    if (json_object_object_get_ex(parsed, "delayedimaploginiri",
             &delayed_imap) &&
             json_object_is_type(delayed_imap, json_type_boolean)) {
         uint8_t newval = json_object_get_boolean(delayed_imap) ? 1 : 0;
 
         if (newval != glob->delayed_imap_id_override) {
             glob->delayed_imap_id_override = newval;
-            UPDATE_SCALAR_CONFIG(pending, "delayedImapLoginIri",
+            UPDATE_SCALAR_CONFIG(pending, "delayedimaploginiri",
                     GENERATE_CONFIG_BOOLEAN(glob->delayed_imap_id_override),
                     false, true);
             logger(LOG_INFO,
@@ -603,4 +647,403 @@ workerfail:
     }
     json_tokener_free(tknr);
     return ret;
+}
+
+static void update_input_yaml_config(collector_global_t *glob,
+        openli_yaml_config_pending_updates_t *pending) {
+
+    colinput_t *inp = NULL, *tmp = NULL;
+    openli_yaml_config_object_t *yamlobjs = NULL;
+    openli_yaml_config_object_field_t **fields = NULL;
+    char **thread_strs = NULL;
+    char **vxlan_strs = NULL;
+    size_t i, num_inputs;
+
+    num_inputs = HASH_COUNT(glob->inputs);
+    if (num_inputs == 0) {
+        return;
+    }
+
+    yamlobjs = calloc(num_inputs, sizeof(openli_yaml_config_object_t));
+    fields = calloc(num_inputs, sizeof(openli_yaml_config_object_field_t *));
+    thread_strs = calloc(num_inputs, sizeof(char *));
+    vxlan_strs = calloc(num_inputs, sizeof(char *));
+
+    i = 0;
+    HASH_ITER(hh, glob->inputs, inp, tmp) {
+        size_t fc = 0;
+        fields[i] = calloc(7, sizeof(openli_yaml_config_object_field_t));
+        thread_strs[i] = calloc(1, 32);
+        vxlan_strs[i] = calloc(1, 32);
+
+        fields[i][fc].key = "uri";
+        fields[i][fc].value = inp->uri;
+        fields[i][fc].is_string = true;
+        fc ++;
+
+        snprintf(thread_strs[i], 32, "%d", inp->threadcount);
+        fields[i][fc].key = "threads";
+        fields[i][fc].value = thread_strs[i];
+        fields[i][fc].is_string = false;
+        fc ++;
+
+        if (inp->filterstring) {
+            fields[i][fc].key = "filter";
+            fields[i][fc].value = inp->filterstring;
+            fields[i][fc].is_string = true;
+            fc ++;
+        }
+
+        if (inp->coremap) {
+            fields[i][fc].key = "coremap";
+            fields[i][fc].value = inp->coremap;
+            fields[i][fc].is_string = true;
+            fc ++;
+        }
+
+        if (inp->hasher_apply == OPENLI_HASHER_BALANCE) {
+            fields[i][fc].key = "hasher";
+            fields[i][fc].value = "balanced";
+            fields[i][fc].is_string = true;
+            fc ++;
+        } else if (inp->hasher_apply == OPENLI_HASHER_BIDIR) {
+            fields[i][fc].key = "hasher";
+            fields[i][fc].value = "bidirectional";
+            fields[i][fc].is_string = true;
+            fc ++;
+        } else if (inp->hasher_apply == OPENLI_HASHER_RADIUS) {
+            fields[i][fc].key = "hasher";
+            fields[i][fc].value = "radius";
+            fields[i][fc].is_string = true;
+            fc ++;
+        }
+
+        if (inp->vxlan_strip) {
+            snprintf(vxlan_strs[i], 32, "%u", inp->vxlan_port);
+            fields[i][fc].key = "stripvxlan";
+            fields[i][fc].value = vxlan_strs[i];
+            fields[i][fc].is_string = false;
+            fc ++;
+        }
+
+        fields[i][fc].key = "reportdrops";
+        fields[i][fc].value = inp->report_drops ? "true" : "false";
+        fields[i][fc].is_string = false;
+        fc ++;
+
+        yamlobjs[i].fields = fields[i];
+        yamlobjs[i].field_count = fc;
+        i++;
+    }
+
+    prepare_new_openli_yaml_config_update(pending);
+    generate_array_object_replace_openli_yaml_config_update(
+            &(pending->updates[pending->update_count]), "inputs",
+            yamlobjs, num_inputs, true);
+    pending->update_count ++;
+
+    for (i = 0; i < num_inputs; i++) {
+        if (fields[i]) {
+            free(fields[i]);
+        }
+        if (thread_strs[i]) {
+            free(thread_strs[i]);
+        }
+        if (vxlan_strs[i]) {
+            free(vxlan_strs[i]);
+        }
+    }
+
+    free(yamlobjs);
+    free(fields);
+    free(thread_strs);
+    free(vxlan_strs);
+
+}
+
+int handle_input_config_changes(collector_global_t *glob,
+        openli_yaml_config_pending_updates_t *pending, char *json) {
+
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL, *inputs_obj = NULL;
+    int ret = -1, changed = 0;
+    size_t inp_count, i;
+
+    tknr = json_tokener_new();
+    parsed = json_tokener_parse_ex(tknr, json, strlen(json));
+
+    if (parsed == NULL) {
+        logger(LOG_INFO, "OpenLI: unable to parse JSON configuration received from provisioner: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        goto inpfail;
+    }
+
+    if (!json_object_object_get_ex(parsed, "inputs", &inputs_obj)) {
+        ret = 0;
+        goto inpfail;
+    }
+
+    if (json_object_is_type(inputs_obj, json_type_array)) {
+        inp_count = json_object_array_length(inputs_obj);
+    } else if (json_object_is_type(inputs_obj, json_type_object)) {
+        inp_count = 1;
+    } else {
+        logger(LOG_WARNING, "OpenLI collector: 'inputs' parameter must be an object or an array of objects -- ignoring");
+        ret = 0;
+        goto inpfail;
+    }
+
+    for (i = 0; i < inp_count; i++) {
+        struct json_object *item;
+        struct json_object *uri_obj, *threads_obj, *hasher_obj;
+        struct json_object *filter_obj, *vxlan_obj, *drop_obj;
+        const char *uri_str = NULL;
+        colinput_t *inp = NULL;
+        int new_threads;
+        char *new_filter = NULL;
+        uint8_t new_hasher, new_vxlan_strip, new_report_drops;
+        uint16_t new_vxlan_port;
+        bool specified_threads = false, specified_hasher = false;
+        bool specified_filter = false, specified_vxlan = false;
+        bool specified_drops = false, filter_changed = false;
+        bool restart_required = false;
+
+        if (json_object_is_type(inputs_obj, json_type_array)) {
+            item = json_object_array_get_idx(inputs_obj, i);
+        } else {
+            item = inputs_obj;
+        }
+
+        uri_obj = threads_obj = hasher_obj = filter_obj = NULL;
+        vxlan_obj = drop_obj = NULL;
+
+        if (item == NULL || !json_object_is_type(item, json_type_object)) {
+            continue;
+        }
+
+        if (!json_object_object_get_ex(item, "uri", &uri_obj) ||
+                !json_object_is_type(uri_obj, json_type_string)) {
+            logger(LOG_WARNING, "OpenLI: cannot update collector input due to missing 'uri' parameter -- ignoring");
+            continue;
+        }
+
+        uri_str = json_object_get_string(uri_obj);
+        HASH_FIND(hh, glob->inputs, uri_str, strlen(uri_str), inp);
+        if (inp == NULL) {
+            logger(LOG_WARNING, "OpenLI: input '%s' is not currently configured on this collector -- ignoring", uri_str);
+            continue;
+        }
+
+        new_threads = inp->threadcount;
+        new_hasher = inp->hasher_apply;
+        new_vxlan_strip = inp->vxlan_strip;
+        new_vxlan_port = inp->vxlan_port;
+        new_report_drops = inp->report_drops;
+
+        if (json_object_object_get_ex(item, "threads", &threads_obj)) {
+            if (json_object_is_type(threads_obj, json_type_int)) {
+                int thval = json_object_get_int(threads_obj);
+                if (thval < 1) {
+                    logger(LOG_WARNING, "OpenLI collector: invalid 'threads' parameter provided for input '%s', must be >= 1 -- ignoring", inp->uri);
+                } else {
+                    new_threads = thval;
+                    specified_threads = true;
+                }
+            } else {
+                logger(LOG_WARNING, "OpenLI collector: invalid 'threads' parameter provided for input '%s' -- ignoring", inp->uri);
+            }
+        }
+
+        if (json_object_object_get_ex(item, "hasher", &hasher_obj)) {
+            if (json_object_is_type(hasher_obj, json_type_string)) {
+                const char *hstr = json_object_get_string(hasher_obj);
+                if (strcasecmp(hstr, "balanced") == 0) {
+                    new_hasher = OPENLI_HASHER_BALANCE;
+                    specified_hasher = true;
+                } else if (strcasecmp(hstr, "bidirectional") == 0) {
+                    new_hasher = OPENLI_HASHER_BIDIR;
+                    specified_hasher = true;
+                } else if (strcasecmp(hstr, "radius") == 0) {
+                    new_hasher = OPENLI_HASHER_RADIUS;
+                    specified_hasher = true;
+                } else {
+                    logger(LOG_WARNING, "OpenLI collector: unsupported hasher type '%s' for input '%s' -- ignoring", hstr, inp->uri);
+                }
+            } else {
+                logger(LOG_WARNING, "OpenLI collector: invalid hasher parameter provided for input '%s' -- ignoring", inp->uri);
+            }
+        }
+
+        if (json_object_object_get_ex(item, "filter", &filter_obj)) {
+            if (json_object_is_type(filter_obj, json_type_null)) {
+                new_filter = NULL;
+                specified_filter = true;
+            } else if (json_object_is_type(filter_obj, json_type_string)) {
+                const char *ftstr = json_object_get_string(filter_obj);
+                if (ftstr[0] == '\0') {
+                    new_filter = NULL;
+                    specified_filter = true;
+                } else {
+                    libtrace_filter_t *test_filter = trace_create_filter(ftstr);
+                    if (test_filter == NULL) {
+                        logger(LOG_WARNING, "OpenLI collector: invalid BPF filter expression '%s' provided for input '%s' -- ignoring", ftstr, inp->uri);
+                    } else {
+                        trace_destroy_filter(test_filter);
+                        new_filter = strdup(ftstr);
+                        specified_filter = true;
+                    }
+                }
+            } else {
+                logger(LOG_WARNING, "OpenLI collector: invalid parameter provided as 'filter' for input '%s' -- ignoring", inp->uri);
+            }
+        }
+
+        if (json_object_object_get_ex(item, "reportdrops", &drop_obj)) {
+            if (json_object_is_type(drop_obj, json_type_boolean)) {
+                new_report_drops = json_object_get_boolean(drop_obj) ? 1 : 0;
+                specified_drops = true;
+            } else {
+                logger(LOG_WARNING, "OpenLI collector: invalid parameter provided as 'reportdrops' for input '%s' -- ignoring", inp->uri);
+            }
+        }
+
+        if (json_object_object_get_ex(item, "stripvxlan", &vxlan_obj)) {
+            if (json_object_is_type(vxlan_obj, json_type_null)) {
+                new_vxlan_strip = 0;
+                new_vxlan_port = 0;
+                specified_vxlan = true;
+            } else if (json_object_is_type(vxlan_obj, json_type_boolean)) {
+                if (json_object_get_boolean(vxlan_obj) == true) {
+                    new_vxlan_strip = 1;
+                    new_vxlan_port = 4789;
+                    specified_vxlan = true;
+                } else {
+                    new_vxlan_strip = 0;
+                    new_vxlan_port = 0;
+                    specified_vxlan = true;
+                }
+            } else if (json_object_is_type(vxlan_obj, json_type_int)) {
+                int port = json_object_get_int(vxlan_obj);
+                if (port <= 0) {
+                    new_vxlan_strip = 0;
+                    new_vxlan_port = 0;
+                    specified_vxlan = true;
+                } else if (port > 65535) {
+                    logger(LOG_WARNING, "OpenLI collector: invalid VXLAN port number %d for input '%s' -- ignoring", port, inp->uri);
+                } else {
+                    new_vxlan_strip = 1;
+                    new_vxlan_port = port;
+                    specified_vxlan = true;
+                }
+            } else {
+                logger(LOG_WARNING, "OpenLI collector: invalid 'stripvxlan' parameter provided for input '%s' -- ignoring", inp->uri);
+            }
+        }
+
+        if (specified_filter) {
+            if (inp->filterstring == NULL && new_filter != NULL) {
+                filter_changed = true;
+            } else if (inp->filterstring != NULL && new_filter == NULL) {
+                filter_changed = true;
+            } else if (new_filter && inp->filterstring &&
+                    strcmp(inp->filterstring, new_filter) != 0) {
+                filter_changed = true;
+            }
+        }
+
+        if (specified_threads) {
+            if (new_threads != inp->threadcount) {
+                restart_required = true;
+            }
+        }
+        if (specified_hasher) {
+            if (new_hasher != inp->hasher_apply) {
+                restart_required = true;
+            }
+        }
+        if (specified_vxlan) {
+            if (new_vxlan_strip != inp->vxlan_strip) {
+                restart_required = true;
+            }
+            if (new_vxlan_port != inp->vxlan_port) {
+                restart_required = true;
+            }
+        }
+        if (filter_changed) {
+            restart_required = true;
+        }
+
+        if (restart_required) {
+            stop_collector_input(glob, inp);
+
+            if (specified_threads && new_threads != inp->threadcount) {
+                logger(LOG_INFO, "OpenLI collector: changing thread count for input '%s' from %d to %d",
+                        inp->uri, inp->threadcount, new_threads);
+                glob->total_col_threads =
+                        glob->total_col_threads - inp->threadcount+new_threads;
+                inp->threadcount = new_threads;
+            }
+
+            if (specified_hasher && new_hasher != inp->hasher_apply) {
+                logger(LOG_INFO, "OpenLI collector: changing hasher for input '%s'", inp->uri);
+                inp->hasher_apply = new_hasher;
+            }
+
+            if (specified_vxlan && (new_vxlan_strip != inp->vxlan_strip ||
+                    new_vxlan_port != inp->vxlan_port)) {
+                if (new_vxlan_strip) {
+                    logger(LOG_INFO, "OpenLI collector: VXLAN stripping now enabled for traffic on port %d for input '%s'", new_vxlan_port, inp->uri);
+                } else {
+                    logger(LOG_INFO, "OpenLI collector: VXLAN stripping now disabled for input '%s'", inp->uri);
+                }
+
+                inp->vxlan_strip = new_vxlan_strip;
+                inp->vxlan_port = new_vxlan_port;
+            }
+
+            if (filter_changed) {
+                logger(LOG_INFO, "OpenLI collector: changing filter for input '%s' to '%s'", inp->uri, new_filter ? new_filter : "none");
+                if (inp->filterstring) free(inp->filterstring);
+                inp->filterstring = new_filter;
+                new_filter = NULL;
+            }
+
+            if (specified_drops && new_report_drops != inp->report_drops) {
+                if (new_report_drops) {
+                    logger(LOG_INFO, "OpenLI collector: enabled drop reporting frequency for input '%s'", inp->uri);
+                } else {
+                    logger(LOG_INFO, "OpenLI collector: disabled drop reporting frequency for input '%s'", inp->uri);
+                }
+                inp->report_drops = new_report_drops;
+            }
+
+            inp->running = 0;
+            inp->start_at = 0;
+            changed = 1;
+        } else if (specified_drops && new_report_drops != inp->report_drops) {
+            if (new_report_drops) {
+                logger(LOG_INFO, "OpenLI collector: enabled drop reporting frequency for input '%s'", inp->uri);
+            } else {
+                logger(LOG_INFO, "OpenLI collector: disabled drop reporting frequency for input '%s'", inp->uri);
+            }
+            inp->report_drops = new_report_drops;
+            changed = 1;
+        }
+
+        if (new_filter) free(new_filter);
+    }
+
+    if (changed) {
+        update_input_yaml_config(glob, pending);
+    }
+
+    ret = 0;
+
+inpfail:
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return ret;
+
 }
