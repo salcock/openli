@@ -48,7 +48,9 @@ uint8_t *decode_cisco_from_udp_payload(uint8_t *payload, uint32_t plen,
         uint32_t *shimintid, uint32_t *bodylen);
 
 /** Converts a Cisco LI-mirrored packet directly into a CC encoding job for
- *  any intercepts that have requested its vendor mirror ID.
+ *  any intercepts that have requested its vendor mirror ID. This method
+ *  expects the UDP encapsulation to still be present in the provided
+ *  packet, i.e. it is delivered exactly as it appeared on the wire.
  *
  *  The vendor mirror ID is used as the CIN for this intercept, as there is
  *  no useful session identifier in the headers applied by Cisco.
@@ -66,6 +68,31 @@ uint8_t *decode_cisco_from_udp_payload(uint8_t *payload, uint32_t plen,
  */
 int generate_cc_from_cisco(colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
+        vendmirror_intercept_list_t *ciscomirrors);
+
+/** Converts a Cisco LI-mirrored packet directly into a CC encoding job
+ *  for any intercepts that have requested its vendor mirror ID. This
+ *  method expects the UDP encapsulation to have been stripped from the
+ *  provided packet.
+ *
+ *  The vendor mirror ID is used as the CIN for this intercept, as there is
+ *  no useful session identifier in the headers applied by Cisco.
+ *
+ * @param loc           The thread-specific state for the thread calling this
+ *                      function.
+ * @param payload       The start of the payload that contains the
+ *                      mirrored packet.
+ * @param rem           The number of bytes in the mirrored packet.
+ * @param pinfo         Details about the original UDP datagram (source and
+ *                      dest IPs, ports, timestamp).
+ * @param ciscomirrors  The list of IP intercepts that are using a vendor
+ *                      mirror ID to nominate their target.
+ *
+ * @return 1 if a CC encoding job is successfully created and actioned. Returns
+ *         0 otherwise.
+ */
+int generate_cc_from_cisco_payload(colthread_local_t *loc, uint8_t *payload,
+        uint32_t rem, packet_info_t *pinfo,
         vendmirror_intercept_list_t *ciscomirrors);
 
 /** Given a packet that has been mirrored by a Cisco device using its LI mode,

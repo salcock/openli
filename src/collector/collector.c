@@ -64,6 +64,10 @@ volatile sig_atomic_t collector_restart = 0;
 volatile int purge_session_flag = 0;
 volatile int rmq_status_changed = 0;
 
+static libtrace_packet_t *process_packet(libtrace_t *trace,
+        libtrace_thread_t *t, void *global, void *tls,
+        libtrace_packet_t *pkt);
+
 static void cleanup_signal(int signal UNUSED)
 {
     collector_halt = 1;
@@ -1467,6 +1471,140 @@ static int apply_vxlan_stripping(libtrace_packet_t *pkt, colinput_t *inp) {
     return 1;
 }
 
+static int vendmirror_coreserver_check(collector_global_t *glob,
+        packet_info_t *pinfo, uint8_t *is_alu, uint8_t *is_jmirror,
+        uint8_t *is_cisco) {
+
+    int ret = 0;
+
+    if (match_packet_to_coreserver_ip(glob->alumirrors, pinfo, 1)) {
+        ret = 1;
+        *is_alu = 1;
+    }
+
+    if (match_packet_to_coreserver_ip(glob->jmirrors, pinfo, 1)) {
+        ret = 1;
+        *is_jmirror = 1;
+    }
+
+    if (match_packet_to_coreserver_ip(glob->ciscomirrors, pinfo, 1)) {
+        ret = 1;
+        *is_cisco = 1;
+    }
+
+    return ret;
+}
+
+static int perform_vendmirror_reassembly(libtrace_thread_t *t,
+        colinput_t *inp, collector_global_t *glob,
+        colthread_local_t *loc, packet_info_t *pinfo, libtrace_ip_t *ipheader,
+        uint32_t vlan_id, uint32_t iprem, mirror_reassembler_t *mirror_reass,
+        int *forwarded) {
+
+    uint8_t *reass_udp;
+    struct timeval reass_ts;
+    uint32_t reass_len;
+    uint8_t is_alu = 0, is_jmirror = 0, is_cisco = 0;
+    libtrace_udp_t *udphdr;
+    int ret;
+
+    pinfo->trans_proto = TRACE_IPPROTO_UDP;
+
+    pthread_rwlock_rdlock(&(glob->config_mutex));
+    ret = vendmirror_coreserver_check(glob, pinfo, &is_alu, &is_jmirror,
+            &is_cisco);
+    pthread_rwlock_unlock(&(glob->config_mutex));
+
+    if (ret) {
+        int r = mirror_reassembly_feed(mirror_reass,
+                (uint8_t *)ipheader, iprem, vlan_id, pinfo->tv, &reass_udp,
+                &reass_len, &reass_ts);
+        if (r <= 0) {
+            return -1;
+        }
+
+        if (reass_udp == NULL) {
+            return -1;
+        }
+        if (reass_len < sizeof(libtrace_udp_t)) {
+            free(reass_udp);
+            return -1;
+        }
+
+        pinfo->tv = reass_ts;
+        udphdr = (libtrace_udp_t *)reass_udp;
+        pinfo->srcport = ntohs(udphdr->source);
+        pinfo->destport = ntohs(udphdr->dest);
+
+        if (is_alu) {
+            pthread_rwlock_rdlock(&(glob->config_mutex));
+            ret = check_alu_intercept_payload(loc,
+                    reass_udp + sizeof(libtrace_udp_t),
+                    reass_len - sizeof(libtrace_udp_t),
+                    pinfo, glob->alumirrors,
+                    loc->activemirrorintercepts);
+            pthread_rwlock_unlock(&(glob->config_mutex));
+
+            if (ret == 1) {
+                *forwarded = 1;
+                loc->local_stats.ipcc_created ++;
+            }
+        }
+
+        if (is_jmirror) {
+            pthread_rwlock_rdlock(&(glob->config_mutex));
+            ret = check_jmirror_intercept_payload(loc,
+                    reass_udp + sizeof(libtrace_udp_t),
+                    reass_len - sizeof(libtrace_udp_t),
+                    pinfo, glob->jmirrors,
+                    loc->activemirrorintercepts);
+            pthread_rwlock_unlock(&(glob->config_mutex));
+
+            if (ret == 1) {
+                *forwarded = 1;
+                loc->local_stats.ipcc_created ++;
+            }
+        }
+
+        if (is_cisco && glob->sharedinfo.cisco_noradius) {
+            pthread_rwlock_rdlock(&(glob->config_mutex));
+            ret = generate_cc_from_cisco_payload(loc,
+                    reass_udp + sizeof(libtrace_udp_t),
+                    reass_len - sizeof(libtrace_udp_t),
+                    pinfo,
+                    loc->activemirrorintercepts);
+            pthread_rwlock_unlock(&(glob->config_mutex));
+
+            if (ret == 1) {
+                *forwarded = 1;
+                loc->local_stats.ipcc_created ++;
+            }
+        } else if (is_cisco && reass_len >= sizeof(libtrace_udp_t) + 4) {
+            libtrace_packet_t *reconstructed;
+
+            if (decode_cisco_from_udp_payload(
+                    reass_udp + sizeof(libtrace_udp_t),
+                    reass_len - sizeof(libtrace_udp_t),
+                    NULL, NULL) != NULL) {
+
+                reconstructed = trace_create_packet();
+                trace_construct_packet(reconstructed, TRACE_TYPE_NONE,
+                        reass_udp + sizeof(libtrace_udp_t) + 4,
+                        reass_len - sizeof(libtrace_udp_t) - 4);
+
+                process_packet(reconstructed->trace, t, (void *)inp,
+                        (void *)loc, reconstructed);
+                trace_destroy_packet(reconstructed);
+            }
+        }
+
+        free(reass_udp);
+        return 1;
+    }
+
+    return 0;
+}
+
 static libtrace_packet_t *process_packet(libtrace_t *trace,
         libtrace_thread_t *t, void *global, void *tls,
         libtrace_packet_t *pkt) {
@@ -1516,6 +1654,9 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         ip_reassemble_stream_t *ipstream;
         libtrace_ip_t *ipheader = (libtrace_ip_t *)l3;
         struct sockaddr_in *in4;
+        uint32_t vlan_id;
+        uint32_t vrem = 0;
+        uint8_t *vlanptr = NULL;
 
         if (rem < ipheader->ip_hl * 4) {
             return pkt;
@@ -1527,8 +1668,19 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         in4->sin_addr = ipheader->ip_dst;
 
         offset = ntohs(ipheader->ip_off);
+
         /* fast check for IP fragmentation */
         if ((offset & 0x2000) || (offset & 0x1FFF)) {
+            if (ipheader->ip_p == TRACE_IPPROTO_UDP && inp->mirror_reass) {
+                vlan_id = trace_get_outermost_vlan(pkt, &vlanptr, &vrem);
+                ret = perform_vendmirror_reassembly(t, inp, glob, loc, &pinfo,
+                        ipheader, vlan_id, iprem, inp->mirror_reass,
+                        &forwarded);
+                if (ret != 0) {
+                    goto processdone;
+                }
+            }
+
             pinfo.fragoff = trace_get_fragment_offset(pkt, &(pinfo.moreflag));
             ipstream = get_ipfrag_reassemble_stream(loc->fragreass, pkt);
             if (!ipstream) {
@@ -1893,6 +2045,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
         return 1;
     }
 
+    inp->mirror_reass = mirror_reassembly_create();
     gettimeofday(&tv, NULL);
     if (tv.tv_sec < inp->start_at) {
         return 1;
@@ -2233,6 +2386,10 @@ static void clear_input(colinput_t *input) {
     }
     if (input->trace) {
         trace_destroy(input->trace);
+    }
+    if (input->mirror_reass) {
+        mirror_reassembly_destroy(input->mirror_reass);
+        input->mirror_reass = NULL;
     }
     if (input->pktcbs) {
         trace_destroy_callback_set(input->pktcbs);

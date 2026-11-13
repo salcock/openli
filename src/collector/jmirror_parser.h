@@ -38,6 +38,9 @@ int check_jmirror_intercept(colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
         coreserver_t *alusources, vendmirror_intercept_list_t *jmirrors);
 
+int check_jmirror_intercept_payload(colthread_local_t *loc, uint8_t *start,
+        uint32_t rem, packet_info_t *pinfo, coreserver_t *jmirror_sources,
+        vendmirror_intercept_list_t *jmirror_ints);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

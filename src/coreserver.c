@@ -231,6 +231,50 @@ int prepare_coreserver(coreserver_t *cs) {
     return 0;
 }
 
+coreserver_t *match_packet_to_coreserver_ip(coreserver_t *serverlist,
+        packet_info_t *pinfo, uint8_t just_dest) {
+
+    coreserver_t *cs, *tmp;
+
+	HASH_ITER(hh, serverlist, cs, tmp) {
+        if (cs->info == NULL) {
+            if (prepare_coreserver(cs) < 0) {
+                HASH_DELETE(hh, serverlist, cs);
+                continue;
+            }
+        }
+
+        if (cs->info->ai_family == AF_INET) {
+            struct sockaddr_in *sa;
+            sa = (struct sockaddr_in *)(&(pinfo->destip));
+            if (CORESERVER_MATCH_V4_ADDRONLY(cs, sa)) {
+                return cs;
+            }
+            if (!just_dest) {
+                sa = (struct sockaddr_in *)(&(pinfo->srcip));
+                if (CORESERVER_MATCH_V4_ADDRONLY(cs, sa)) {
+                    return cs;
+                }
+            }
+
+        } else if (cs->info->ai_family == AF_INET6) {
+            struct sockaddr_in6 *sa6;
+            sa6 = (struct sockaddr_in6 *)(&(pinfo->destip));
+            if (CORESERVER_MATCH_V6_ADDRONLY(cs, sa6)) {
+                return cs;
+            }
+            if (!just_dest) {
+                sa6 = (struct sockaddr_in6 *)(&(pinfo->srcip));
+                if (CORESERVER_MATCH_V6_ADDRONLY(cs, sa6)) {
+                    return cs;
+                }
+            }
+        }
+	}
+
+	return NULL;
+}
+
 coreserver_t *match_packet_to_coreserver(coreserver_t *serverlist,
         packet_info_t *pinfo, uint8_t just_dest, uint8_t *matched_dest) {
 

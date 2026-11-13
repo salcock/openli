@@ -77,35 +77,16 @@ uint8_t *decode_cisco_from_udp_payload(uint8_t *payload, uint32_t plen,
     return l3;
 }
 
-/** Converts a Cisco LI-mirrored packet directly into a CC encoding job for
- *  any intercepts that have requested its vendor mirror ID.
- *
- *  The vendor mirror ID is used as the CIN for this intercept, as there is
- *  no useful session identifier in the headers applied by Cisco.
- *
- * @param loc           The thread-specific state for the thread calling this
- *                      function.
- * @param packet        The packet to be intercepted.
- * @param pinfo         Details about the packet (source and dest IPs, ports,
- *                      timestamp).
- * @param ciscomirrors  The list of IP intercepts that are using a vendor
- *                      mirror ID to nominate their target.
- *
- * @return 1 if a CC encoding job is successfully created and actioned. Returns
- *         0 otherwise.
- */
-int generate_cc_from_cisco(colthread_local_t *loc,
-        libtrace_packet_t *packet, packet_info_t *pinfo,
+int generate_cc_from_cisco_payload(colthread_local_t *loc, uint8_t *payload,
+        uint32_t rem, packet_info_t *pinfo,
         vendmirror_intercept_list_t *ciscomirrors) {
 
-    void *payload;
     uint8_t *l3;
-    uint32_t rem, cept_id, bodylen;
+    uint32_t cept_id, bodylen;
     vendmirror_intercept_t *cept, *tmp;
     vendmirror_intercept_list_t *vmilist;
     openli_cc_prefix_filter_t *cc_exclude;
 
-    payload = get_udp_payload(packet, &rem, NULL, NULL);
     l3 = decode_cisco_from_udp_payload(payload, rem, &cept_id, &bodylen);
     if (l3 == NULL) {
         return 0;
@@ -135,7 +116,7 @@ int generate_cc_from_cisco(colthread_local_t *loc,
         /* Create an appropriate IPCC and export it */
         if (push_vendor_mirrored_ipcc_job(
                 loc->zmq_pubsocks[cept->common.seqtrackerid], &(cept->common),
-                trace_get_timeval(packet), cept_id, ETSI_DIR_INDETERMINATE,
+                pinfo->tv, cept_id, ETSI_DIR_INDETERMINATE,
                 l3, bodylen) == 0) {
             /* for some reason, we failed to create or send the IPCC to
              * the sequencing thread? */
@@ -143,6 +124,39 @@ int generate_cc_from_cisco(colthread_local_t *loc,
         }
     }
     return 1;
+}
+
+/** Converts a Cisco LI-mirrored packet directly into a CC encoding job for
+ *  any intercepts that have requested its vendor mirror ID.
+ *
+ *  The vendor mirror ID is used as the CIN for this intercept, as there is
+ *  no useful session identifier in the headers applied by Cisco.
+ *
+ * @param loc           The thread-specific state for the thread calling this
+ *                      function.
+ * @param packet        The packet to be intercepted.
+ * @param pinfo         Details about the packet (source and dest IPs, ports,
+ *                      timestamp).
+ * @param ciscomirrors  The list of IP intercepts that are using a vendor
+ *                      mirror ID to nominate their target.
+ *
+ * @return 1 if a CC encoding job is successfully created and actioned. Returns
+ *         0 otherwise.
+ */
+int generate_cc_from_cisco(colthread_local_t *loc,
+        libtrace_packet_t *packet, packet_info_t *pinfo,
+        vendmirror_intercept_list_t *ciscomirrors) {
+
+    void *payload;
+    uint32_t rem = 0;
+
+    payload = get_udp_payload(packet, &rem, NULL, NULL);
+    if (!payload || rem == 0) {
+        return 0;
+    }
+
+    return generate_cc_from_cisco_payload(loc, (uint8_t *)payload, rem,
+            pinfo, ciscomirrors);
 }
 
 /** Given a packet that has been mirrored by a Cisco device using its LI mode,

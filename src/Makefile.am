@@ -108,6 +108,7 @@ openlicollector_SOURCES=collector/collector.c \
                 collector/collector_integrity_check.h \
                 collector/sip_callstate_tracker.c \
                 openli_epoll.c openli_epoll.h \
+                collector/mirror_reassembly.c collector/mirror_reassembly.h \
                 $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 

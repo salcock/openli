@@ -158,26 +158,19 @@ uint8_t *decode_alushim_from_udp_payload(uint8_t *payload, uint32_t plen,
     return l3;
 }
 
-int check_alu_intercept(colthread_local_t *loc,
-        libtrace_packet_t *packet, packet_info_t *pinfo,
-        coreserver_t *alusources, vendmirror_intercept_list_t *aluints) {
+int check_alu_intercept_payload(colthread_local_t *loc, uint8_t *payload,
+        uint32_t rem, packet_info_t *pinfo, coreserver_t *alusources,
+        vendmirror_intercept_list_t *aluints) {
 
     coreserver_t *cs;
     vendmirror_intercept_t *alu, *tmp;
     vendmirror_intercept_list_t *vmilist;
-    uint32_t rem = 0, shimintid, cin, bodylen;
-    void *l3;
-    uint8_t *payload = NULL;
+    uint32_t shimintid, cin, bodylen;
     uint8_t direction;
     openli_cc_prefix_filter_t *cc_exclude;
+    void *l3;
 
     if ((cs = match_packet_to_coreserver(alusources, pinfo, 1, NULL)) == NULL) {
-        return 0;
-    }
-
-    /* Extract the intercept ID, direction and session ID */
-    payload = get_udp_payload(packet, &rem, NULL, NULL);
-    if (!payload || rem < sizeof(alushimhdr_t)) {
         return 0;
     }
 
@@ -221,7 +214,7 @@ int check_alu_intercept(colthread_local_t *loc,
         /* Create an appropriate IPCC and export it */
         if (push_vendor_mirrored_ipcc_job(
                 loc->zmq_pubsocks[alu->common.seqtrackerid], &(alu->common),
-                trace_get_timeval(packet), cin, direction, l3, bodylen) == 0) {
+                pinfo->tv, cin, direction, l3, bodylen) == 0) {
             /* for some reason, we failed to create or send the IPCC to
              * the sequencing thread? */
 
@@ -229,6 +222,24 @@ int check_alu_intercept(colthread_local_t *loc,
     }
 
     return 1;
+
+}
+
+int check_alu_intercept(colthread_local_t *loc,
+        libtrace_packet_t *packet, packet_info_t *pinfo,
+        coreserver_t *alusources, vendmirror_intercept_list_t *aluints) {
+
+    uint8_t *payload = NULL;
+    uint32_t rem = 0;
+
+    /* Extract the intercept ID, direction and session ID */
+    payload = get_udp_payload(packet, &rem, NULL, NULL);
+    if (!payload || rem < sizeof(alushimhdr_t)) {
+        return 0;
+    }
+
+    return check_alu_intercept_payload(loc, payload, rem, pinfo, alusources,
+            aluints);
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -74,16 +74,15 @@ uint8_t *decode_jmirror_from_udp_payload(uint8_t *payload, uint32_t plen,
     return l3;
 }
 
-int check_jmirror_intercept(colthread_local_t *loc,
-        libtrace_packet_t *packet, packet_info_t *pinfo,
-        coreserver_t *jmirror_sources,
+int check_jmirror_intercept_payload(colthread_local_t *loc, uint8_t *start,
+        uint32_t rem, packet_info_t *pinfo, coreserver_t *jmirror_sources,
         vendmirror_intercept_list_t *jmirror_ints) {
 
     coreserver_t *cs;
-    uint32_t rem = 0, cept_id, cin, bodylen;
+    uint32_t cept_id, cin, bodylen;
     vendmirror_intercept_t *cept, *tmp;
     vendmirror_intercept_list_t *vmilist;
-    uint8_t *l3, *start;
+    uint8_t *l3;
     openli_cc_prefix_filter_t *cc_exclude;
 
     if ((cs = match_packet_to_coreserver(jmirror_sources, pinfo, 1,
@@ -91,7 +90,6 @@ int check_jmirror_intercept(colthread_local_t *loc,
         return 0;
     }
 
-    start = get_udp_payload(packet, &rem, NULL, NULL);
     l3 = decode_jmirror_from_udp_payload(start, rem, &cin, &cept_id,
             &bodylen);
     if (l3 == NULL) {
@@ -121,7 +119,7 @@ int check_jmirror_intercept(colthread_local_t *loc,
         /* Create an appropriate IPCC and export it */
         if (push_vendor_mirrored_ipcc_job(
                 loc->zmq_pubsocks[cept->common.seqtrackerid], &(cept->common),
-                trace_get_timeval(packet), cin, ETSI_DIR_INDETERMINATE,
+                pinfo->tv, cin, ETSI_DIR_INDETERMINATE,
                 l3, bodylen) == 0) {
             /* for some reason, we failed to create or send the IPCC to
              * the sequencing thread? */
@@ -129,6 +127,23 @@ int check_jmirror_intercept(colthread_local_t *loc,
         }
     }
     return 1;
+}
+
+int check_jmirror_intercept(colthread_local_t *loc,
+        libtrace_packet_t *packet, packet_info_t *pinfo,
+        coreserver_t *jmirror_sources,
+        vendmirror_intercept_list_t *jmirror_ints) {
+
+    uint32_t rem = 0;
+    uint8_t *start;
+
+    start = get_udp_payload(packet, &rem, NULL, NULL);
+    if (!start || rem < sizeof(jmirrorhdr_t)) {
+        return 0;
+    }
+
+    return check_jmirror_intercept_payload(loc, start, rem, pinfo,
+            jmirror_sources, jmirror_ints);
 
 }
 

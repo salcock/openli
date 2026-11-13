@@ -59,6 +59,7 @@
 #include "sctp_worker.h"
 #include "sipparsing.h"
 #include "x2x3_ingest.h"
+#include "mirror_reassembly.h"
 
 #define PACKET_RETURN_ZMQ "inproc://coll-packet-return"
 
@@ -175,6 +176,8 @@ typedef struct colinput {
 
     time_t start_at;
     uint8_t no_restart;
+
+    mirror_reassembler_t *mirror_reass;
 
     uint8_t hasher_apply;
     hash_radius_conf_t hashradconf;

@@ -93,11 +93,21 @@ const char *coreserver_type_to_string(uint8_t cstype);
 coreserver_t *deep_copy_coreserver(coreserver_t *cs);
 int prepare_coreserver(coreserver_t *cs);
 
+coreserver_t *match_packet_to_coreserver_ip(coreserver_t *serverlist,
+        packet_info_t *pinfo, uint8_t just_dest);
 coreserver_t *match_packet_to_coreserver(coreserver_t *serverlist,
         packet_info_t *pinfo, uint8_t just_dest, uint8_t *matched_dest);
 
 #define CS_TO_V4(cs) ((struct sockaddr_in *)(cs->info->ai_addr))
 #define CS_TO_V6(cs) ((struct sockaddr_in6 *)(cs->info->ai_addr))
+
+#define CORESERVER_MATCH_V4_ADDRONLY(cs, sa) \
+    (memcmp(&(sa->sin_addr), &(CS_TO_V4(cs)->sin_addr), \
+        sizeof(struct in_addr)) == 0)
+
+#define CORESERVER_MATCH_V6_ADDRONLY(cs, sa) \
+    (memcmp(&(sa->sin6_addr), &(CS_TO_V6(cs)->sin6_addr), \
+        sizeof(struct in6_addr)) == 0)
 
 #define CORESERVER_MATCH_V4(cs, sa, port) \
     ((port >= cs->lower_portnumeric && port <= cs->upper_portnumeric) && \
