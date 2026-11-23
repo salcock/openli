@@ -301,7 +301,7 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
 
 static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
         colthread_local_t *loc, int *matched, libtrace_packet_t *pkt,
-        packet_info_t *pinfo, struct timeval *tv) {
+        packet_info_t *pinfo, struct timeval *tv, uint8_t dir) {
 
     patricia_node_t *pnode = NULL;
     prefix_t prefix;
@@ -368,11 +368,11 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
                             INTERNET_ACCESS_TYPE_MOBILE) {
 
                         msg = create_epscc_job_from_ip(sess->cin,
-                                sess->common.liid, sess->common.destid, pkt, 0,
+                                sess->common.liid, sess->common.destid, pkt, dir,
                                 sess->common.authcc, sess->common.delivcc);
                     } else {
                         msg = create_ipcc_job(sess->cin, sess->common.liid,
-                                sess->common.destid, pkt, 0,
+                                sess->common.destid, pkt, dir,
                                 sess->common.authcc, sess->common.delivcc);
                     }
                     if (msg != NULL) {
@@ -403,10 +403,10 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
      */
 
     cmp = (struct sockaddr_in6 *)(&pinfo->srcip);
-    singlev6_conn_contents(cmp, loc, &matched, pkt, pinfo, &pinfo->tv);
+    singlev6_conn_contents(cmp, loc, &matched, pkt, pinfo, &pinfo->tv, 0);
 
     cmp = (struct sockaddr_in6 *)(&pinfo->destip);
-    singlev6_conn_contents(cmp, loc, &matched, pkt, pinfo, &pinfo->tv);
+    singlev6_conn_contents(cmp, loc, &matched, pkt, pinfo, &pinfo->tv, 1);
 
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->srcip),
             AF_INET6, pkt, 0, loc, pinfo, &pinfo->tv);
