@@ -619,39 +619,39 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
         provision_state_t *state) {
 
     json_object *jarray, *jobj, *x2x3obj, *sinkobj;
-    size_t x2x3count, sinkcount, j;
+    size_t x2x3count, sinkcount, j, i, colcount = 0;
     x2x3_listener_t *x2x3;
     collector_udp_sink_t *sinks;
-    prov_collector_t *col, *tmp;
-    known_client_t kc;
+    known_client_t *cols;
+    prov_collector_t *connected;
 
     jarray = json_object_new_array();
-    if (HASH_CNT(hh, state->collectors) == 0) {
+    cols = fetch_all_collector_clients(state, &colcount);
+    if (!cols || colcount == 0) {
         return jarray;
     }
 
-    HASH_ITER(hh, state->collectors, col, tmp) {
-        kc.type = TARGET_COLLECTOR;
-        kc.colname = col->identifier;
+    for (i = 0; i < colcount; i++) {
+        jobj = convert_client_to_json(&(cols[i]));
 
-        if (col->client && col->client->ipaddress) {
-            kc.ipaddress = col->client->ipaddress;
+        if (cols[i].colname) {
+            HASH_FIND(hh, state->collectors, cols[i].colname,
+                    strlen(cols[i].colname), connected);
         } else {
-            kc.ipaddress = NULL;
+            connected = NULL;
         }
-        kc.firstseen = col->firstseen;
-        kc.lastseen = col->lastseen;
-        kc.jsonconfig = col->jsonconfig;
 
-        jobj = convert_client_to_json(&kc);
+        json_object_object_add(jobj, "status",
+                json_object_new_string(connected ? "connected": "offline"));
+
         x2x3obj = json_object_new_array();
         sinkobj = json_object_new_array();
 
-        if (kc.colname) {
+        if (cols[i].colname) {
             x2x3 = fetch_x2x3_listeners_for_collector(state, &x2x3count,
-                    kc.colname);
+                    cols[i].colname);
             sinks = fetch_udp_sinks_for_collector(state, &sinkcount,
-                    kc.colname);
+                    cols[i].colname);
         } else {
             x2x3 = NULL;
             sinks = NULL;
@@ -685,7 +685,7 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
                 ipaddr = json_object_new_string(sinks[j].ipaddr);
                 port = json_object_new_string(sinks[j].port);
                 lastseen = openli_json_object_new_uint64(sinks[j].lastseen);
-                ident = json_object_new_string(kc.colname);
+                ident = json_object_new_string(cols[i].colname);
 
                 json_object_object_add(base, "ipaddress", ipaddr);
                 json_object_object_add(base, "port", port);
@@ -702,7 +702,9 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
         json_object_object_add(jobj, "x2x3listeners", x2x3obj);
         json_object_object_add(jobj, "udpsinks", sinkobj);
         json_object_array_add(jarray, jobj);
+        free_known_client(&(cols[i]), 0);
     }
+    free(cols);
 
     return jarray;
 }
@@ -713,6 +715,7 @@ json_object *get_known_mediators(update_con_info_t *cinfo UNUSED,
     json_object *jarray, *jobj;
     known_client_t *meds;
     size_t medcount, i;
+    prov_mediator_t *connected;
 
     meds = fetch_all_mediator_clients(state, &medcount);
     if (!meds || medcount == 0) {
@@ -721,7 +724,12 @@ json_object *get_known_mediators(update_con_info_t *cinfo UNUSED,
 
     jarray = json_object_new_array();
     for (i = 0; i < medcount; i++) {
+        HASH_FIND(hh, state->mediators, &(meds[i].medid),
+                sizeof(meds[i].medid), connected);
+
         jobj = convert_client_to_json(&(meds[i]));
+        json_object_object_add(jobj, "status",
+                json_object_new_string(connected ? "connected" : "offline"));
         json_object_array_add(jarray, jobj);
         free_known_client(&(meds[i]), 0);
     }
